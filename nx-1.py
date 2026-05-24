@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-VIDA DIGITAL v6
+nx-1 1.0
 CNDV — Célula Neuronal Digital Viva
 
 Implementación estricta del documento arquitectónico formal.
@@ -82,7 +82,7 @@ def derive_simulation_scale(max_cells: int) -> SimulationScale:
 
     side = max(MIN_WORLD_SIDE, math.ceil(math.sqrt(max_cells)))
     capacity = side * side
-    if capacity < max_cells:
+    if capacity < max_cells:  # pragma: no cover - impossible after ceil(sqrt(max_cells))
         raise AssertionError("La capacidad espacial derivada no cubre MAX_CELLS")
     if capacity > MAX_DENSE_WORLD_CELLS:
         raise ValueError(
@@ -1898,6 +1898,7 @@ class Junction:
     last_pre_tick: Optional[int] = None
     last_post_tick: Optional[int] = None
     prune_score: float = 0.0
+    utility_trace: float = 0.0
     event_queue: List[Tuple[int, float]] = field(default_factory=list)
 
     def other(self, cell_id: str) -> Optional[str]:
@@ -1919,7 +1920,55 @@ class Junction:
             "transport_capacity": round(self.transport_capacity, 3),
             "signal_conductance": round(self.signal_conductance, 3),
             "weight": round(self.weight, 3),
+            "utility": round(self.utility_trace, 3),
             "queue": len(self.event_queue),
+        }
+
+
+@dataclass
+class OrganismInstance:
+    """Unidad multicelular causal derivada de un componente conectado."""
+    organism_id: str
+    member_cell_ids: Set[str]
+    junction_ids: Set[str]
+    shared_stress: float
+    boundary_integrity: float
+    boundary_closure: float
+    collective_energy_pressure: float
+    collective_damage: float
+    collective_identity: float
+    development_stage: str
+    reproduction_pressure: float
+    role_coverage: float
+    topology_integrity: float
+    metabolic_exchange: float
+    neural_coordination: float
+
+    def evolutionary_score(self) -> float:
+        size_term = math.log1p(len(self.member_cell_ids))
+        return float(max(0.0, size_term * self.collective_identity *
+                         (0.45 + self.role_coverage) *
+                         (0.50 + self.topology_integrity) *
+                         (1.0 - 0.55 * self.collective_damage)))
+
+    def to_dict(self) -> Dict:
+        return {
+            "id": self.organism_id,
+            "members": len(self.member_cell_ids),
+            "junctions": len(self.junction_ids),
+            "shared_stress": round(self.shared_stress, 3),
+            "boundary_integrity": round(self.boundary_integrity, 3),
+            "boundary_closure": round(self.boundary_closure, 3),
+            "energy_pressure": round(self.collective_energy_pressure, 3),
+            "collective_damage": round(self.collective_damage, 3),
+            "collective_identity": round(self.collective_identity, 3),
+            "development_stage": self.development_stage,
+            "reproduction_pressure": round(self.reproduction_pressure, 3),
+            "role_coverage": round(self.role_coverage, 3),
+            "topology_integrity": round(self.topology_integrity, 3),
+            "metabolic_exchange": round(self.metabolic_exchange, 3),
+            "neural_coordination": round(self.neural_coordination, 3),
+            "evolutionary_score": round(self.evolutionary_score(), 3),
         }
 
 
@@ -1943,41 +1992,108 @@ class OrganismState:
     reproduction_pressure: float = 0.0
     role_coverage: float = 0.0
     topology_integrity: float = 0.0
+    boundary_closure: float = 0.0
+    metabolic_exchange: float = 0.0
+    neural_coordination: float = 0.0
+    organisms: List[OrganismInstance] = field(default_factory=list)
+    _previous_members: Dict[str, Set[str]] = field(default_factory=dict)
 
-    def update(self, cells: Dict[str, "Cell"], junctions: Dict[str, Junction]):
-        alive = [c for c in cells.values() if c.alive]
-        self.member_cell_ids = {c.id for c in alive}
-        self.junction_ids = {jid for jid, j in junctions.items()
-                             if j.cell_a in self.member_cell_ids and j.cell_b in self.member_cell_ids}
+    BODY_JUNCTIONS = (JunctionKind.ADHESION, JunctionKind.GAP, JunctionKind.METABOLIC)
 
-        if not alive:
-            self.shared_stress = 0.0
-            self.boundary_integrity = 0.0
-            self.collective_energy_pressure = 1.0
-            self.collective_damage = 1.0
-            self.collective_identity = 0.0
-            self.development_stage = "extinct"
-            self.reproduction_pressure = 0.0
-            self.role_coverage = 0.0
-            self.topology_integrity = 0.0
-            return
+    def _reset_extinct(self):
+        self.member_cell_ids = set()
+        self.junction_ids = set()
+        self.shared_stress = 0.0
+        self.boundary_integrity = 0.0
+        self.boundary_closure = 0.0
+        self.collective_energy_pressure = 1.0
+        self.collective_damage = 1.0
+        self.collective_identity = 0.0
+        self.development_stage = "extinct"
+        self.reproduction_pressure = 0.0
+        self.role_coverage = 0.0
+        self.topology_integrity = 0.0
+        self.metabolic_exchange = 0.0
+        self.neural_coordination = 0.0
+        self.organisms = []
 
-        n = len(alive)
-        self.shared_stress = float(np.mean([c.homeostasis.g_stress for c in alive]))
-        self.collective_energy_pressure = float(np.mean([1.0 - c.metabolism.atp_fraction for c in alive]))
-        self.collective_damage = float(np.mean([c.damage_X for c in alive]))
+    def _connected_components(self, alive_ids: Set[str],
+                              junctions: Dict[str, Junction]) -> List[Set[str]]:
+        adjacency: Dict[str, Set[str]] = {cid: set() for cid in alive_ids}
+        for j in junctions.values():
+            if j.kind not in self.BODY_JUNCTIONS:
+                continue
+            if j.cell_a in alive_ids and j.cell_b in alive_ids:
+                adjacency[j.cell_a].add(j.cell_b)
+                adjacency[j.cell_b].add(j.cell_a)
 
-        boundary_cells = [c for c in alive if c.cell_type == CellType.BOUNDARY]
-        self.boundary_integrity = float(np.mean([c.boundary.c_integrity for c in boundary_cells])
-                                        if boundary_cells else 0.0)
+        seen: Set[str] = set()
+        components: List[Set[str]] = []
+        for cid in sorted(alive_ids):
+            if cid in seen:
+                continue
+            stack = [cid]
+            comp: Set[str] = set()
+            seen.add(cid)
+            while stack:
+                cur = stack.pop()
+                comp.add(cur)
+                for nb in adjacency[cur]:
+                    if nb not in seen:
+                        seen.add(nb)
+                        stack.append(nb)
+            components.append(comp)
+        return components
 
-        active_junctions = [junctions[jid] for jid in self.junction_ids]
-        adhesion_like = [j for j in active_junctions if j.kind in (JunctionKind.ADHESION, JunctionKind.GAP,
-                                                                   JunctionKind.METABOLIC, JunctionKind.SYNAPTIC)]
+    def _stable_id_for(self, comp: Set[str], used: Set[str]) -> str:
+        best_id = None
+        best_overlap = 0
+        for oid, old_members in self._previous_members.items():
+            if oid in used:
+                continue
+            overlap = len(comp & old_members)
+            if overlap > best_overlap:
+                best_id = oid
+                best_overlap = overlap
+        if best_id is not None and best_overlap / max(1, len(comp)) >= 0.25:
+            used.add(best_id)
+            return best_id
+        oid = str(uuid.uuid4())[:8]
+        used.add(oid)
+        return oid
+
+    def _compute_instance(self, oid: str, comp: Set[str], cells: Dict[str, "Cell"],
+                          junctions: Dict[str, Junction]) -> OrganismInstance:
+        members = [cells[cid] for cid in comp if cid in cells and cells[cid].alive]
+        n = len(members)
+        comp_junction_ids = {
+            jid for jid, j in junctions.items()
+            if j.cell_a in comp and j.cell_b in comp
+        }
+        active_junctions = [junctions[jid] for jid in comp_junction_ids]
+        body_junctions = [j for j in active_junctions if j.kind in self.BODY_JUNCTIONS]
+        synapses = [j for j in active_junctions if j.kind == JunctionKind.SYNAPTIC]
+
+        shared_stress = float(np.mean([c.homeostasis.g_stress for c in members]))
+        energy_pressure = float(np.mean([1.0 - c.metabolism.atp_fraction for c in members]))
+        collective_damage = float(np.mean([c.damage_X for c in members]))
+
+        boundary_cells = [c for c in members if c.cell_type == CellType.BOUNDARY]
+        boundary_integrity = float(np.mean([c.boundary.c_integrity for c in boundary_cells])
+                                   if boundary_cells else 0.0)
+        xs = [c.x for c in members]
+        ys = [c.y for c in members]
+        bbox_area = (max(xs) - min(xs) + 1) * (max(ys) - min(ys) + 1) if members else 1
+        expected_surface = max(1.0, 2.0 * math.sqrt(max(1, bbox_area)))
+        boundary_closure = float(np.clip(
+            (len(boundary_cells) / expected_surface) * boundary_integrity,
+            0.0, 1.0
+        ))
+
         possible_edges = max(1, n - 1)
-        self.topology_integrity = float(np.clip(
-            len(adhesion_like) / possible_edges *
-            (np.mean([j.strength for j in adhesion_like]) if adhesion_like else 0.0),
+        topology_integrity = float(np.clip(
+            len(body_junctions) / possible_edges *
+            (np.mean([j.strength for j in body_junctions]) if body_junctions else 0.0),
             0.0, 1.0
         ))
 
@@ -1985,50 +2101,135 @@ class OrganismState:
             CellType.BOUNDARY, CellType.METABOLIC, CellType.REPAIR,
             CellType.SIGNALING, CellType.NEURON
         }
-        present_roles = {c.cell_type for c in alive}
-        self.role_coverage = len(required_roles & present_roles) / len(required_roles)
+        present_roles = {c.cell_type for c in members}
+        role_coverage = len(required_roles & present_roles) / len(required_roles)
 
-        mean_identity = float(np.mean([c.identity.I for c in alive]))
-        exchange = float(np.clip(
+        metabolic_exchange = float(np.clip(
             sum(j.transport_capacity * j.strength for j in active_junctions
                 if j.kind in (JunctionKind.GAP, JunctionKind.METABOLIC)) / max(1.0, n),
             0.0, 1.0
         ))
-        self.collective_identity = float(np.clip(
-            0.28 * mean_identity +
-            0.22 * self.topology_integrity +
-            0.18 * exchange +
-            0.18 * self.role_coverage +
-            0.14 * (1.0 - self.shared_stress),
+
+        neural_roles = {CellType.SENSORY, CellType.NEURON, CellType.MOTOR}
+        role_loop = len(neural_roles & present_roles) / len(neural_roles)
+        neural_coordination = float(np.clip(
+            (len(synapses) / max(1.0, n)) *
+            (np.mean([abs(j.weight) * j.signal_conductance * j.strength
+                      for j in synapses]) if synapses else 0.0) *
+            (0.5 + role_loop),
+            0.0, 1.0
+        ))
+
+        mean_identity = float(np.mean([c.identity.I for c in members]))
+        collective_identity = float(np.clip(
+            0.22 * mean_identity +
+            0.18 * topology_integrity +
+            0.16 * metabolic_exchange +
+            0.16 * role_coverage +
+            0.14 * boundary_closure +
+            0.08 * neural_coordination +
+            0.06 * (1.0 - shared_stress),
             0.0, 1.0
         ))
 
         germline_ready = any(c.cell_type == CellType.GERMLINE and
                              c.reproduction.r_maturity > 0.7 and c.identity.I > 0.55
-                             for c in alive)
-        self.reproduction_pressure = float(np.clip(
+                             for c in members)
+        reproduction_pressure = float(np.clip(
             (1.0 if germline_ready else 0.0) *
-            self.collective_identity *
-            (1.0 - self.collective_energy_pressure),
+            collective_identity *
+            (1.0 - energy_pressure) *
+            (0.55 + 0.45 * role_coverage),
             0.0, 1.0
         ))
 
-        if n < 3 or not active_junctions:
-            self.development_stage = "solitary"
-        elif self.collective_identity < 0.35:
-            self.development_stage = "aggregate"
-        elif self.role_coverage < 0.6:
-            self.development_stage = "proto_tissue"
+        if n < 3 or not body_junctions:
+            stage = "solitary"
+        elif collective_identity < 0.35:
+            stage = "aggregate"
+        elif role_coverage < 0.6 or boundary_closure < 0.20:
+            stage = "proto_tissue"
+        elif neural_coordination > 0.18 and boundary_closure > 0.35:
+            stage = "integrated_body"
         else:
-            self.development_stage = "integrated"
+            stage = "integrated"
+
+        return OrganismInstance(
+            organism_id=oid,
+            member_cell_ids=set(comp),
+            junction_ids=comp_junction_ids,
+            shared_stress=shared_stress,
+            boundary_integrity=boundary_integrity,
+            boundary_closure=boundary_closure,
+            collective_energy_pressure=energy_pressure,
+            collective_damage=collective_damage,
+            collective_identity=collective_identity,
+            development_stage=stage,
+            reproduction_pressure=reproduction_pressure,
+            role_coverage=role_coverage,
+            topology_integrity=topology_integrity,
+            metabolic_exchange=metabolic_exchange,
+            neural_coordination=neural_coordination,
+        )
+
+    def update(self, cells: Dict[str, "Cell"], junctions: Dict[str, Junction]):
+        alive = [c for c in cells.values() if c.alive]
+        if not alive:
+            self._reset_extinct()
+            return
+
+        alive_ids = {c.id for c in alive}
+        components = self._connected_components(alive_ids, junctions)
+        used_ids: Set[str] = set()
+        organisms = [
+            self._compute_instance(self._stable_id_for(comp, used_ids), comp, cells, junctions)
+            for comp in components
+        ]
+        organisms.sort(key=lambda o: (o.evolutionary_score(), len(o.member_cell_ids)), reverse=True)
+        self.organisms = organisms
+        self._previous_members = {o.organism_id: set(o.member_cell_ids) for o in organisms}
+
+        for c in alive:
+            c.organism_id = None
+        for org in organisms:
+            for cid in org.member_cell_ids:
+                if cid in cells:
+                    cells[cid].organism_id = org.organism_id
+
+        primary = organisms[0]
+        self.organism_id = primary.organism_id
+        self.member_cell_ids = set(primary.member_cell_ids)
+        self.junction_ids = set(primary.junction_ids)
+        self.shared_stress = primary.shared_stress
+        self.boundary_integrity = primary.boundary_integrity
+        self.boundary_closure = primary.boundary_closure
+        self.collective_energy_pressure = primary.collective_energy_pressure
+        self.collective_damage = primary.collective_damage
+        self.collective_identity = primary.collective_identity
+        self.development_stage = primary.development_stage
+        self.reproduction_pressure = primary.reproduction_pressure
+        self.role_coverage = primary.role_coverage
+        self.topology_integrity = primary.topology_integrity
+        self.metabolic_exchange = primary.metabolic_exchange
+        self.neural_coordination = primary.neural_coordination
+
+    def get(self, organism_id: Optional[str]) -> Optional[OrganismInstance]:
+        if organism_id is None:
+            return None
+        for org in self.organisms:
+            if org.organism_id == organism_id:
+                return org
+        return None
 
     def to_dict(self) -> Dict:
         return {
             "id": self.organism_id,
             "members": len(self.member_cell_ids),
+            "organism_count": len(self.organisms),
             "junctions": len(self.junction_ids),
             "shared_stress": round(self.shared_stress, 3),
             "boundary_integrity": round(self.boundary_integrity, 3),
+            "boundary_closure": round(self.boundary_closure, 3),
             "energy_pressure": round(self.collective_energy_pressure, 3),
             "collective_damage": round(self.collective_damage, 3),
             "collective_identity": round(self.collective_identity, 3),
@@ -2036,6 +2237,9 @@ class OrganismState:
             "reproduction_pressure": round(self.reproduction_pressure, 3),
             "role_coverage": round(self.role_coverage, 3),
             "topology_integrity": round(self.topology_integrity, 3),
+            "metabolic_exchange": round(self.metabolic_exchange, 3),
+            "neural_coordination": round(self.neural_coordination, 3),
+            "organisms": [o.to_dict() for o in self.organisms[:8]],
         }
 
 
@@ -2102,6 +2306,7 @@ class Cell:
         # Capa multicelular: vínculos persistentes, cooperación y vigilancia.
         self.junction_ids: Set[str] = set()
         self.attachment_strength = 0.0
+        self.organism_id: Optional[str] = None
         self.synaptic_input = np.zeros(4, dtype=np.float64)
         self.last_spike_tick: Optional[int] = None
         self.spike_output = 0.0
@@ -2596,6 +2801,7 @@ class Cell:
             "B9_identity":    self.identity.to_dict(),
             "multicellular": {
                 "junction_count": len(self.junction_ids),
+                "organism_id": self.organism_id,
                 "attachment_strength": round(self.attachment_strength, 3),
                 "spike_output": round(self.spike_output, 3),
                 "contribution": round(self.contribution_score, 3),
@@ -2842,7 +3048,7 @@ class Colony:
 
         for j in list(self.junctions.values()):
             if j.kind != JunctionKind.ADHESION or j.age < 6 or j.strength < 0.35:
-                continue
+                continue  # pragma: no cover - coverage.py does not trace this bare continue on Python 3.9
             a = self.cells.get(j.cell_a); b = self.cells.get(j.cell_b)
             if a is None or b is None:
                 continue
@@ -2922,7 +3128,7 @@ class Colony:
             amount = max(0.0, amount)
             available = getattr(donor.metabolism, attr)
             actual = min(available, amount)
-            if actual <= 1e-9:
+            if actual <= 1e-9:  # pragma: no cover - callers only request positive available resources
                 return
             receiver_cap = getattr(receiver.metabolism, cap_attr)
             accepted = min(actual, max(0.0, receiver_cap - getattr(receiver.metabolism, attr)))
@@ -3018,12 +3224,33 @@ class Colony:
             if j.last_pre_tick is not None and j.last_post_tick is not None:
                 dt = j.last_post_tick - j.last_pre_tick
                 if -8 <= dt <= 8:
+                    org = self.organism.get(post.organism_id)
+                    org_bonus = 0.0
+                    if org is not None and pre.organism_id == post.organism_id:
+                        functional_loop = (
+                            pre.cell_type in (CellType.SENSORY, CellType.NEURON) and
+                            post.cell_type in (CellType.NEURON, CellType.MOTOR, CellType.REPAIR, CellType.METABOLIC)
+                        )
+                        viability = (
+                            org.collective_identity -
+                            0.35 * org.collective_damage -
+                            0.25 * org.collective_energy_pressure
+                        )
+                        org_bonus = np.clip(viability, -0.35, 0.65) * (1.35 if functional_loop else 0.65)
                     if dt >= 0:
-                        j.weight += 0.012 * math.exp(-dt / 4.0)
+                        j.weight += (0.012 + 0.004 * org_bonus) * math.exp(-dt / 4.0)
                     else:
-                        j.weight -= 0.010 * math.exp(dt / 4.0)
+                        j.weight -= (0.010 + 0.003 * max(0.0, -org_bonus)) * math.exp(dt / 4.0)
+                    j.utility_trace = float(np.clip(0.94 * j.utility_trace + 0.06 * org_bonus, -1.0, 1.0))
                     j.weight = float(np.clip(j.weight, -1.5, 1.8))
-                    j.strength = float(np.clip(j.strength + 0.003 * abs(j.weight), 0.0, 1.0))
+                    if j.utility_trace < -0.25:
+                        j.prune_score += 0.010
+                    else:
+                        j.prune_score = max(0.0, j.prune_score - 0.012 * max(0.0, j.utility_trace))
+                    j.strength = float(np.clip(
+                        j.strength + 0.003 * abs(j.weight) + 0.002 * max(0.0, j.utility_trace),
+                        0.0, 1.0
+                    ))
                     j.last_activity = self.tick_count
 
     def _differentiate_cells(self):
@@ -3031,15 +3258,26 @@ class Colony:
             return
         alive_cells = [c for c in self.cells.values() if c.alive]
         type_counts: Dict[CellType, int] = {}
+        organism_type_counts: Dict[str, Dict[CellType, int]] = {}
+        organism_sizes: Dict[str, int] = {}
         for c in alive_cells:
             type_counts[c.cell_type] = type_counts.get(c.cell_type, 0) + 1
+            if c.organism_id:
+                org_counts = organism_type_counts.setdefault(c.organism_id, {})
+                org_counts[c.cell_type] = org_counts.get(c.cell_type, 0) + 1
+                organism_sizes[c.organism_id] = organism_sizes.get(c.organism_id, 0) + 1
         role_floor = max(1, int(len(alive_cells) * 0.06))
 
-        def scarcity(t: CellType) -> float:
+        def scarcity(t: CellType, cell: Cell) -> float:
+            if cell.organism_id and cell.organism_id in organism_type_counts:
+                org_size = organism_sizes.get(cell.organism_id, len(alive_cells))
+                org_floor = max(1, int(org_size * 0.12))
+                org_count = organism_type_counts[cell.organism_id].get(t, 0)
+                return max(0.0, (org_floor - org_count) / max(1.0, org_floor))
             return max(0.0, (role_floor - type_counts.get(t, 0)) / max(1.0, role_floor))
 
         for c in alive_cells:
-            if not c.alive:
+            if not c.alive:  # pragma: no cover - alive_cells is prefiltered
                 continue
             neighbors = self.world.get_neighbor_cells(c.x, c.y, 2, self.cells)
             neighbor_count = len(neighbors)
@@ -3058,24 +3296,38 @@ class Colony:
             morph_bias = np.clip(
                 morph_a * morph_resp[0] + morph_b * morph_resp[1], -0.30, 0.30
             )
+            org = self.organism.get(c.organism_id)
+            org_counts = organism_type_counts.get(c.organism_id, {}) if c.organism_id else {}
+            org_size = organism_sizes.get(c.organism_id, len(alive_cells)) if c.organism_id else len(alive_cells)
+            org_identity = org.collective_identity if org is not None else self.organism.collective_identity
+            neural_need = 0.26 if org_identity > 0.42 and org_counts.get(CellType.NEURON, 0) == 0 else 0.0
+            sensory_need = 0.16 if org_identity > 0.45 and org_counts.get(CellType.SENSORY, 0) == 0 else 0.0
+            motor_need = 0.16 if org_identity > 0.45 and org_counts.get(CellType.MOTOR, 0) == 0 else 0.0
+            germline_need = (
+                0.42 if org_identity > 0.45 and org_size >= 6 and
+                org_counts.get(CellType.GERMLINE, 0) == 0 else 0.0
+            )
 
             scores = {
                 CellType.STEM: 0.15 if c.age_ticks < c.genome.development_ticks * 2 else 0.02,
                 CellType.BOUNDARY: (0.25 if adhesion_count > 0 else 0.0) +
                                    max(0.0, 4 - neighbor_count) * 0.06 +
-                                   c.boundary.c_integrity * 0.10 + scarcity(CellType.BOUNDARY) * 0.20 +
+                                   c.boundary.c_integrity * 0.10 + scarcity(CellType.BOUNDARY, c) * 0.20 +
                                    float(morph_bias[0]),
                 CellType.METABOLIC: c.metabolism.atp_fraction * 0.45 + min(1.0, c.metabolism.r_raw / 80.0) * 0.25 +
-                                    scarcity(CellType.METABOLIC) * 0.52 + float(morph_bias[2]),
+                                    scarcity(CellType.METABOLIC, c) * 0.52 + float(morph_bias[2]),
                 CellType.REPAIR: neighbor_damage * 0.75 + c.homeostasis.g_damage_error * 0.35 +
-                                 scarcity(CellType.REPAIR) * 0.50 + float(morph_bias[3]),
+                                 scarcity(CellType.REPAIR, c) * 0.50 + float(morph_bias[3]),
                 CellType.SIGNALING: c.communication.z_signal_load * 0.80 + local_signals[SIGNAL_IDX["crowding"]] / 100.0 +
-                                    scarcity(CellType.SIGNALING) * 0.46,
+                                    scarcity(CellType.SIGNALING, c) * 0.46,
                 CellType.NEURON: c.neural.t_excitation * 0.65 + syn_count * 0.18 + c.memory.h_integrity * 0.10 +
-                                 scarcity(CellType.NEURON) * 0.20 + float(morph_bias[1]),
-                CellType.SENSORY: c.communication.z_coherence * 0.18 + np.mean(local_signals > 3.0) * 0.28,
-                CellType.MOTOR: c.genome.motility * 0.35 + abs(c.neural.t_action_bias[0]) * 0.20 + abs(c.neural.t_action_bias[1]) * 0.20,
-                CellType.GERMLINE: c.reproduction.r_maturity * 0.65 + c.identity.I * 0.20 - c.damage_X * 0.4,
+                                 scarcity(CellType.NEURON, c) * 0.36 + neural_need + float(morph_bias[1]),
+                CellType.SENSORY: c.communication.z_coherence * 0.18 + np.mean(local_signals > 3.0) * 0.28 +
+                                  sensory_need,
+                CellType.MOTOR: c.genome.motility * 0.35 + abs(c.neural.t_action_bias[0]) * 0.20 +
+                                abs(c.neural.t_action_bias[1]) * 0.20 + motor_need,
+                CellType.GERMLINE: c.reproduction.r_maturity * 0.65 + c.identity.I * 0.20 -
+                                   c.damage_X * 0.4 + germline_need,
                 CellType.POLICING: c.cheater_score * 0.15 + max(0.0, self.organism.shared_stress - 0.35) * 0.65,
             }
             target = max(scores, key=scores.get)
@@ -3111,16 +3363,25 @@ class Colony:
                     c.cheater_score *= 0.8
 
     def _apply_organism_pressure(self):
-        if self.organism.collective_identity <= 0.0:
-            return
-        for c in self.cells.values():
-            if not c.alive:
+        for org in self.organism.organisms:
+            if org.collective_identity <= 0.0:
                 continue
-            if self.organism.shared_stress > 0.38:
-                c.homeostasis.p_repair = min(0.85, c.homeostasis.p_repair + 0.015)
-                c.homeostasis.p_reproduction = max(0.02, c.homeostasis.p_reproduction - 0.010)
-            if self.organism.collective_identity > 0.52 and c.cell_type in (CellType.BOUNDARY, CellType.REPAIR):
-                c.contribution_score = min(10.0, c.contribution_score + 0.002)
+            for cid in org.member_cell_ids:
+                c = self.cells.get(cid)
+                if c is None or not c.alive:
+                    continue
+                if org.shared_stress > 0.38:
+                    c.homeostasis.p_repair = min(0.85, c.homeostasis.p_repair + 0.015)
+                    c.homeostasis.p_reproduction = max(0.02, c.homeostasis.p_reproduction - 0.010)
+                if len(org.member_cell_ids) >= 3 and org.collective_identity < 0.22:
+                    c.damage_X = min(1.0, c.damage_X + 0.002)
+                    c.reproduction.r_maturity = max(0.0, c.reproduction.r_maturity - 0.006)
+                if org.boundary_closure < 0.25 and c.cell_type == CellType.BOUNDARY:
+                    c.contribution_score = min(10.0, c.contribution_score + 0.004)
+                if org.neural_coordination > 0.16 and c.cell_type in (CellType.SENSORY, CellType.NEURON, CellType.MOTOR):
+                    c.contribution_score = min(10.0, c.contribution_score + 0.003)
+                if org.collective_identity > 0.52 and c.cell_type in (CellType.BOUNDARY, CellType.REPAIR):
+                    c.contribution_score = min(10.0, c.contribution_score + 0.002)
 
     def _free_positions_near(self, x: int, y: int, radius: int, limit: int) -> List[Tuple[int, int]]:
         candidates = []
@@ -3140,22 +3401,36 @@ class Colony:
             return
         if len(self.cells) + 3 > self.max_cells:
             return
-        if self.organism.collective_identity < 0.65 or self.organism.role_coverage < 0.8:
+        candidates = [
+            org for org in self.organism.organisms
+            if org.collective_identity >= 0.58 and
+            org.role_coverage >= 0.8 and
+            org.reproduction_pressure >= 0.07 and
+            len(org.member_cell_ids) >= 3
+        ]
+        if not candidates:
             return
-        if self.organism.reproduction_pressure < 0.25:
+        parent_org = max(candidates, key=lambda o: o.evolutionary_score() + o.reproduction_pressure)
+        seed_count = 4 if parent_org.boundary_closure > 0.35 else 3
+        if parent_org.neural_coordination > 0.18:
+            seed_count = 5
+        if len(self.cells) + seed_count > self.max_cells:
             return
 
         germline = [
-            c for c in self.cells.values()
-            if c.alive and c.cell_type == CellType.GERMLINE and
-            c.reproduction.r_maturity > 0.7 and c.identity.I > 0.55 and
-            c.metabolism.a_free > 20 and c.metabolism.m_struct > 25
+            self.cells[cid] for cid in parent_org.member_cell_ids
+            if cid in self.cells and self.cells[cid].alive and
+            self.cells[cid].cell_type == CellType.GERMLINE and
+            self.cells[cid].reproduction.r_maturity > 0.7 and
+            self.cells[cid].identity.I > 0.55 and
+            self.cells[cid].metabolism.a_free > 20 and
+            self.cells[cid].metabolism.m_struct > 25
         ]
         if not germline:
             return
         parent = max(germline, key=lambda c: c.identity.I + c.metabolism.atp_fraction)
-        positions = self._free_positions_near(parent.x, parent.y, 2, 3)
-        if len(positions) < 3:
+        positions = self._free_positions_near(parent.x, parent.y, 2, seed_count)
+        if len(positions) < seed_count:
             return
 
         child_genome = parent.reproduction.build_offspring_genome(
@@ -3165,14 +3440,14 @@ class Colony:
             parent._log("ORGANISM_REPRO_ABORTED:heredity")
             return
 
-        atp_cost = 14.0
-        struct_cost = 10.0
+        atp_cost = 10.0 + 2.0 * seed_count
+        struct_cost = 7.0 + 1.5 * seed_count
         if parent.metabolism.consume_atp(atp_cost) < atp_cost * 0.8:
             return
         if parent.metabolism.consume_structural(struct_cost) < struct_cost * 0.8:
             return
 
-        seed_types = [CellType.STEM, CellType.BOUNDARY, CellType.METABOLIC]
+        seed_types = [CellType.STEM, CellType.BOUNDARY, CellType.METABOLIC, CellType.REPAIR, CellType.NEURON][:seed_count]
         created: List[Cell] = []
         for (px, py), target_type in zip(positions, seed_types):
             g = child_genome.mutate(parent.rng)
@@ -3192,8 +3467,16 @@ class Colony:
         if len(created) >= 3:
             self._create_junction(JunctionKind.ADHESION, created[1].id, created[2].id, 0.55, 0.04, 0.10)
             self._create_junction(JunctionKind.METABOLIC, created[0].id, created[2].id, 0.42, 0.24, 0.12)
+        if len(created) >= 4:
+            self._create_junction(JunctionKind.ADHESION, created[1].id, created[3].id, 0.44, 0.04, 0.10)
+            self._create_junction(JunctionKind.METABOLIC, created[2].id, created[3].id, 0.34, 0.20, 0.12)
+        if len(created) >= 5:
+            syn = self._create_junction(JunctionKind.SYNAPTIC, created[4].id, created[3].id, 0.36, 0.0, 0.24, 0.24)
+            if syn is not None and self.rng.random() < 0.25:
+                syn.receptor_type = "inhibitory"
+                syn.weight = -abs(syn.weight)
         parent.reproduction.r_maturity = max(0.0, parent.reproduction.r_maturity - 0.35)
-        parent._log("ORGANISM_REPRODUCTION:seed_cluster")
+        parent._log(f"ORGANISM_REPRODUCTION:{parent_org.organism_id}:seed_cluster")
         self.organism.update(self.cells, self.junctions)
 
     def status(self) -> Dict:
@@ -3223,6 +3506,7 @@ class Colony:
             "cell_types": type_dist,
             "avg_identity_I": round(avg_I, 3),
             "organism": self.organism.to_dict(),
+            "organisms": [o.to_dict() for o in self.organism.organisms[:12]],
             "junction_count": len(self.junctions),
             "junctions": [j.to_dict() for j in list(self.junctions.values())[:80]],
             "recent_deaths": self.dead_log[-5:],
@@ -3288,14 +3572,20 @@ class EvolutionEngine:
         # +1 so generation-0 cells still produce positive fitness
         mean_gen = 1.0 + sum(c._generation for c in alive) / len(alive)
         mean_I   = sum(c.identity.I  for c in alive) / len(alive)
+        organism_scores = [o.evolutionary_score() for o in colony.organism.organisms]
+        best_body = max(organism_scores) if organism_scores else 0.0
+        viable_bodies = sum(1 for o in colony.organism.organisms
+                            if o.development_stage in ("proto_tissue", "integrated", "integrated_body"))
+        body_diversity = min(1.0, viable_bodies / 4.0)
         stage_mult = {
-            "solitary":    0.5,
-            "aggregate":   0.8,
-            "proto_tissue":1.2,
-            "integrated":  2.0,
-            "extinct":     0.0,
+            "solitary":        0.45,
+            "aggregate":       0.75,
+            "proto_tissue":    1.25,
+            "integrated":      1.8,
+            "integrated_body": 2.3,
+            "extinct":         0.0,
         }.get(colony.organism.development_stage, 0.5)
-        return mean_gen * mean_I * stage_mult
+        return float(mean_gen * mean_I * stage_mult * (0.65 + best_body + 0.25 * body_diversity))
 
     # ── Torneo de selección ────────────────────────────────────
 
@@ -3365,12 +3655,15 @@ class EvolutionEngine:
         self.evolution_history.append({
             "tournament": len(self.evolution_history) + 1,
             "tick": self.tick_count,
-            "fitnesses": [round(f, 4) for f in fitnesses],
+            "fitnesses": [float(round(f, 4)) for f in fitnesses],
             "winner_indices": winners,
             "loser_indices": losers,
-            "best_fitness": round(fitnesses[best_idx], 4),
-            "mean_fitness": round(sum(fitnesses) / len(fitnesses), 4),
+            "best_fitness": float(round(fitnesses[best_idx], 4)),
+            "mean_fitness": float(round(sum(fitnesses) / len(fitnesses), 4)),
             "best_genome": best_genome_snap,
+            "best_organisms": [
+                o.to_dict() for o in best_colony.organism.organisms[:3]
+            ],
         })
         if len(self.evolution_history) > 20:
             self.evolution_history.pop(0)
@@ -3400,7 +3693,7 @@ class EvolutionEngine:
             "n_colonies": self.n_colonies,
             "tournament_interval": self.tournament_interval,
             "tournaments_run": len(self.evolution_history),
-            "colony_fitnesses": [round(f, 4) for f in fitnesses],
+            "colony_fitnesses": [float(round(f, 4)) for f in fitnesses],
             "best_colony_idx": best_idx,
             "colony_sizes": [
                 sum(1 for c in col.cells.values() if c.alive)
@@ -3410,7 +3703,7 @@ class EvolutionEngine:
                 col.organism.development_stage for col in self.colonies
             ],
             "founding_genome_fidelities": [
-                round(g.fidelity, 3) for g in self.founding_genomes
+                float(round(g.fidelity, 3)) for g in self.founding_genomes
             ],
             "evolution_history": self.evolution_history[-5:],
         }
@@ -3426,7 +3719,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>VIDA DIGITAL v6 — CNDV</title>
+<title>nx-1 1.0 — CNDV</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { background: #060a0f; color: #c8d8e8; font-family: 'Courier New', monospace; font-size: 12px; }
@@ -3497,7 +3790,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 <body>
 <div id="header">
   <div class="pulse"></div>
-  <h1>VIDA DIGITAL v6</h1>
+  <h1>nx-1</h1>
   <div class="subtitle">CNDV — 9 bloques | B1-B9 | M1-M3 | H1-H4 | D1-D7</div>
   <span id="tick-counter">tick 0</span>
   <div id="speed-control">
@@ -3569,8 +3862,9 @@ function renderColonyStats(d) {
     <div class="colony-stat"><div class="val">${s.alive}</div><div class="lbl">vivas</div></div>
     <div class="colony-stat"><div class="val">${(s.avg_identity_I*100).toFixed(0)}%</div><div class="lbl">I media</div></div>
     <div class="colony-stat"><div class="val">${s.junction_count||0}</div><div class="lbl">junctions</div></div>
-    <div class="colony-stat"><div class="val">${((org.collective_identity||0)*100).toFixed(0)}%</div><div class="lbl">I organismo</div></div>
-    <div class="colony-stat"><div class="val">${Object.keys(s.cell_types||{}).length}</div><div class="lbl">tipos</div></div>
+    <div class="colony-stat"><div class="val">${org.organism_count||0}</div><div class="lbl">organismos</div></div>
+    <div class="colony-stat"><div class="val">${((org.collective_identity||0)*100).toFixed(0)}%</div><div class="lbl">I cuerpo</div></div>
+    <div class="colony-stat"><div class="val">${((org.boundary_closure||0)*100).toFixed(0)}%</div><div class="lbl">frontera cuerpo</div></div>
     <div class="colony-stat"><div class="val">${s.tick}</div><div class="lbl">tick</div></div>
   `;
   document.getElementById('tick-counter').textContent = `tick ${s.tick}`;
@@ -3586,7 +3880,7 @@ function renderCells(cells) {
         <span class="gen-badge">G${c.generation}</span>
         <span style="color:#4a7090;float:right">t=${c.age}</span>
       </div>
-      <div style="color:#4a7090;font-size:10px">tipo: ${c.cell_type || 'n/a'}</div>
+      <div style="color:#4a7090;font-size:10px">tipo: ${c.cell_type || 'n/a'} | org: ${c.multicellular?.organism_id || '-'}</div>
       ${barRow('I identidad', 'bar-identity', S.I)}
       ${barRow('ATP', 'bar-atp', S.A)}
       ${barRow('Frontera', 'bar-boundary', S.C)}
@@ -3633,7 +3927,7 @@ function renderCellDetail(c) {
     <div style="margin-bottom:6px">
       <span class="cell-id">#${c.id}</span>${phaseTag(c.phase)}
       <span class="gen-badge" style="margin-left:5px">Generación ${c.generation}</span>
-      <div style="color:#4a7090;font-size:10px">edad ${c.age} ticks | pos (${c.position.x},${c.position.y})</div>
+      <div style="color:#4a7090;font-size:10px">edad ${c.age} ticks | pos (${c.position.x},${c.position.y}) | org ${MC.organism_id || '-'}</div>
     </div>
 
     <div class="section-title">B9 Identidad — I = ${((S.I||0)*100).toFixed(0)}%</div>
@@ -3966,7 +4260,7 @@ def run_server(port: int = 8765):
 def main():
     global EVOLUTION_ENGINE, MAX_CELLS, N_COLONIES, TOURNAMENT_INTERVAL
 
-    ap = argparse.ArgumentParser(description="VIDA DIGITAL v6 — CNDV")
+    ap = argparse.ArgumentParser(description="nx-1 1.0 — CNDV")
     ap.add_argument("--max-cells",          type=int,   default=MAX_CELLS,
                     help=f"Total cell budget across all colonies (default {MAX_CELLS})")
     ap.add_argument("--n-colonies",         type=int,   default=N_COLONIES,
@@ -3984,7 +4278,7 @@ def main():
     TOURNAMENT_INTERVAL = args.tournament_interval
 
     print("=" * 60)
-    print("  VIDA DIGITAL v6 — CNDV + EvolutionEngine")
+    print("  nx-1 1.0 — CNDV + EvolutionEngine")
     print("  B1-B9 | M1-M3 | H1-H4 | D1-D7 | Torneo multinivel")
     print(f"  {N_COLONIES} colonias | torneo cada {TOURNAMENT_INTERVAL} ticks | max_cells={MAX_CELLS:,}")
     print("=" * 60)
@@ -4056,5 +4350,5 @@ def main():
         server.shutdown()
 
 
-if __name__ == '__main__':
+if __name__ == '__main__':  # pragma: no cover - CLI entrypoint, exercised through main()
     main()
