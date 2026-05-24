@@ -1,24 +1,24 @@
 #!/usr/bin/env python3
 """
 nx-1 1.0
-CNDV — Célula Neuronal Digital Viva
+LDNC — Living Digital Neural Cell
 
-Implementación estricta del documento arquitectónico formal.
+Strict implementation of the formal architectural document.
 
-B1: Frontera activa          — estado completo, permeabilidad dinámica
-B2: Metabolismo              — cadena 5 etapas, sin conversión perfecta
-B3: Homeostasis              — red regulatoria con señales de error (sin ifs hardcoded)
-B4: Sustrato cognitivo       — red recurrente + STDP + degradación
-B5: Memoria material         — 4 subtipos causales: estructural/regulatoria/adaptiva/heredable
-B6: Reparación               — repara TODOS los bloques, compite con reproducción
-B7: Reproducción             — 4 tipos herencia, fallo posible, desarrollo como proceso
-B8: Acoplamiento ecológico   — mundo espacial, acción guiada por neuronal
-B9: Identidad                — variable I computada, muerte M3 organizacional
+B1: Active boundary          — complete state, dynamic permeability
+B2: Metabolism               — 5-stage chain, no perfect conversion
+B3: Homeostasis              — regulatory network with error signals (no hardcoded ifs)
+B4: Cognitive substrate      — recurrent network + STDP + degradation
+B5: Material memory          — 4 causal subtypes: structural/regulatory/adaptive/heritable
+B6: Repair                   — repairs ALL blocks, competes with reproduction
+B7: Reproduction             — 4 inheritance types, possible failure, development as process
+B8: Ecological coupling      — spatial world, neurally guided action
+B9: Identity                 — computed variable I, organizational death M3
 
 S(t) = {R_ext, R_int, A, M, P, W, X, G, T, C, I}
-Muerte: M1 metabólica | M2 estructural | M3 organizacional
-Degradación: D1-D7
-Herencia: H1-H4
+Death: M1 metabolic | M2 structural | M3 organizational
+Degradation: D1-D7
+Inheritance: H1-H4
 """
 
 import argparse, math, random, time, json, threading, uuid, copy
@@ -29,13 +29,13 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 import numpy as np
 
 # ─────────────────────────────────────────────────────────────
-# ESCALA DE SIMULACIÓN
+# SIMULATION SCALE
 # ─────────────────────────────────────────────────────────────
 #
-# Cambia MAX_CELLS y el resto de constantes ecológicas necesarias se
-# derivan de ahí. La regla central es innegociable: si hay una ocupación
-# máxima de una célula por coordenada, el mundo debe tener al menos
-# max_cells coordenadas habitables.
+# Change MAX_CELLS and the rest of the ecological constants needed will be
+# derived from it. The central rule is non-negotiable: if there is a maximum
+# occupancy of one cell per coordinate, the world must have at least
+# max_cells habitable coordinates.
 MAX_CELLS = 10_000
 BASE_MAX_CELLS = 10_000
 BASE_SOURCE_COUNT = 320
@@ -69,26 +69,26 @@ class SimulationScale:
 
 def derive_simulation_scale(max_cells: int) -> SimulationScale:
     """
-    Deriva las variables espaciales y tróficas que dependen de max_cells.
+    Derives the spatial and trophic variables that depend on max_cells.
 
-    Esta simulación usa un mundo denso con una célula por coordenada. Por eso
-    el tamaño mínimo correcto del mundo es ceil(sqrt(max_cells))². Para valores
-    enormes, la arquitectura densa actual deja de ser ejecutable en memoria; en
-    ese caso fallamos temprano en vez de mentir con una colonia imposible.
+    This simulation uses a dense world with one cell per coordinate. Therefore
+    the correct minimum world size is ceil(sqrt(max_cells))². For very large
+    values, the current dense architecture is no longer memory-executable; in
+    that case we fail early rather than lying with an impossible colony.
     """
     max_cells = int(max_cells)
     if max_cells < 1:
-        raise ValueError("MAX_CELLS debe ser >= 1")
+        raise ValueError("MAX_CELLS must be >= 1")
 
     side = max(MIN_WORLD_SIDE, math.ceil(math.sqrt(max_cells)))
     capacity = side * side
     if capacity < max_cells:  # pragma: no cover - impossible after ceil(sqrt(max_cells))
-        raise AssertionError("La capacidad espacial derivada no cubre MAX_CELLS")
+        raise AssertionError("Derived spatial capacity does not cover MAX_CELLS")
     if capacity > MAX_DENSE_WORLD_CELLS:
         raise ValueError(
-            "MAX_CELLS exige un mundo denso de "
-            f"{capacity:,} posiciones. La arquitectura actual de matrices densas "
-            "no puede garantizar supervivencia a esa escala sin cambiar el modelo espacial."
+            "MAX_CELLS requires a dense world of "
+            f"{capacity:,} positions. The current dense-matrix architecture "
+            "cannot guarantee survival at that scale without changing the spatial model."
         )
 
     source_ratio = BASE_SOURCE_COUNT / BASE_MAX_CELLS
@@ -106,35 +106,37 @@ def derive_simulation_scale(max_cells: int) -> SimulationScale:
     )
 
 # ─────────────────────────────────────────────────────────────
-# CANALES BIOSEMIÓTICOS DE COMUNICACIÓN INTERCELULAR
+# BIOSEMIOTIC INTERCELLULAR COMMUNICATION CHANNELS
 # ─────────────────────────────────────────────────────────────
 #
-# No son "mensajes humanos" ni embeddings ML. Son campos causales, costosos,
-# difusivos y degradables: equivalentes digitales a señales químicas locales.
-# Cada canal está anclado a una variable vital de la célula, para que el
-# significado no sea arbitrario sino metabólico/homeostático.
+# These are not "human messages" or ML embeddings. They are causal, costly,
+# diffusive, and degradable fields: digital equivalents of local chemical signals.
+# Each channel is anchored to a vital variable of the cell, so that its
+# meaning is not arbitrary but metabolic/homeostatic.
 SIGNAL_CHANNELS = (
-    "nutrient_beacon",      # hay recurso aprovechable aquí / camino hacia recurso
-    "toxin_alarm",         # peligro externo o carga tóxica local
-    "energy_need",         # déficit energético interno
-    "repair_need",         # daño/frontera/memoria requieren reparación
-    "reproduction_ready",  # célula madura/estable, señal ecológica de linaje
-    "crowding",            # demasiada densidad local, evitar saturación espacial
-    "death_trace",         # necroseñal: muerte/colapso organizacional cercano
+    "nutrient_beacon",      # exploitable resource here / path toward resource
+    "toxin_alarm",         # external danger or local toxic load
+    "energy_need",         # internal energy deficit
+    "repair_need",         # damage/boundary/memory requires repair
+    "reproduction_ready",  # mature/stable cell, lineage ecological signal
+    "crowding",            # too much local density, avoid spatial saturation
+    "death_trace",         # necrosignal: nearby death/organizational collapse
 )
 SIGNAL_IDX = {name: i for i, name in enumerate(SIGNAL_CHANNELS)}
 N_SIGNAL_CHANNELS = len(SIGNAL_CHANNELS)
 
 # ─────────────────────────────────────────────────────────────
-# MUNDO ESPACIAL (sustrato de B8)
+# SPATIAL WORLD (B8 substrate)
 # ─────────────────────────────────────────────────────────────
 
 class SpatialWorld:
-    """Mundo 2D con difusión discreta, fuentes de nutrientes y acumulación de toxinas."""
+    """2D world with discrete diffusion, nutrient sources, and toxin accumulation."""
 
     def __init__(self, width: int = 40, height: int = 40,
                  n_sources: int = 6, rng: random.Random = None,
-                 source_strength: float = 3.5):
+                 source_strength: float = 3.5,
+                 perturbation_interval: int = 0,
+                 perturbation_strength: float = 1.0):
         self.W = width
         self.H = height
         self.rng = rng or random.Random()
@@ -142,36 +144,39 @@ class SpatialWorld:
         # grids
         self.nutrients = np.zeros((H, W) if False else (height, width), dtype=np.float64)
         self.toxins    = np.zeros((height, width), dtype=np.float64)
-        # Campos de comunicación intercelular: C × H × W.
-        # Vectorizados para mantener costo bajo: O(canales × mundo), no O(células²).
+        # Intercellular communication fields: C × H × W.
+        # Vectorized to keep cost low: O(channels × world), not O(cells²).
         self.signals   = np.zeros((N_SIGNAL_CHANNELS, height, width), dtype=np.float64)
-        # Gradientes morfogenéticos: campos posicionales fijos para diferenciar
-        # el espacio y permitir la evolución de planes corporales heredables.
-        # morphogen_a: eje anterior-posterior (x=0 → 1.0, x=W-1 → 0.0)
-        # morphogen_b: eje dorsal-ventral    (y=0 → 1.0, y=H-1 → 0.0)
+        # Morphogenetic gradients: fixed positional fields for differentiating
+        # space and enabling evolution of heritable body plans.
+        # morphogen_a: anterior-posterior axis (x=0 → 1.0, x=W-1 → 0.0)
+        # morphogen_b: dorsal-ventral axis     (y=0 → 1.0, y=H-1 → 0.0)
         self.morphogen_a = np.zeros((height, width), dtype=np.float64)
         self.morphogen_b = np.zeros((height, width), dtype=np.float64)
         self.morphogen_a[:, :] = np.linspace(1.0, 0.0, width)[np.newaxis, :]
         self.morphogen_b[:, :] = np.linspace(1.0, 0.0, height)[:, np.newaxis]
         self.occupied  = {}  # (x,y) -> cell_id
-        # fuentes fijas de nutrientes
+        # fixed nutrient sources
         self.sources = [(self.rng.randint(2, width-3), self.rng.randint(2, height-3))
                         for _ in range(n_sources)]
-        # seed inicial
+        # initial seed
         for sx, sy in self.sources:
             self.nutrients[sy, sx] = 80.0
         self.tick_count = 0
+        # periodic environmental perturbation (Feature E)
+        self.perturbation_interval = perturbation_interval
+        self.perturbation_strength = perturbation_strength
 
     def tick(self):
-        """Difusión discreta + emisión de fuentes + evaporación."""
-        # difusión nutrients
+        """Discrete diffusion + source emission + evaporation."""
+        # nutrient diffusion
         lap = (
             np.roll(self.nutrients, 1, 0) + np.roll(self.nutrients, -1, 0) +
             np.roll(self.nutrients, 1, 1) + np.roll(self.nutrients, -1, 1) -
             4 * self.nutrients
         )
         self.nutrients += 0.08 * lap
-        # difusión toxinas
+        # toxin diffusion
         lap_t = (
             np.roll(self.toxins, 1, 0) + np.roll(self.toxins, -1, 0) +
             np.roll(self.toxins, 1, 1) + np.roll(self.toxins, -1, 1) -
@@ -179,9 +184,9 @@ class SpatialWorld:
         )
         self.toxins += 0.05 * lap_t
 
-        # difusión de señales biosemióticas.
-        # Señales = rápidas, locales, degradables. La evaporación impide memoria infinita
-        # y fuerza comunicación situada en el presente ecológico.
+        # biosemiotic signal diffusion.
+        # Signals = fast, local, degradable. Evaporation prevents infinite memory
+        # and forces communication situated in the ecological present.
         for ch in range(N_SIGNAL_CHANNELS):
             grid = self.signals[ch]
             lap_s = (
@@ -189,35 +194,48 @@ class SpatialWorld:
                 np.roll(grid, 1, 1) + np.roll(grid, -1, 1) -
                 4 * grid
             )
-            # alarmas y muerte viajan un poco más rápido que señales cooperativas
+            # alarms and death travel slightly faster than cooperative signals
             diff = 0.14 if ch in (SIGNAL_IDX["toxin_alarm"], SIGNAL_IDX["death_trace"]) else 0.09
             decay = 0.925 if ch in (SIGNAL_IDX["energy_need"], SIGNAL_IDX["repair_need"]) else 0.945
             self.signals[ch] += diff * lap_s
             self.signals[ch] *= decay
 
-        # emisión fuentes
+        # source emission
         for sx, sy in self.sources:
             self.nutrients[sy, sx] = min(120.0, self.nutrients[sy, sx] + self.source_strength)
-        # evaporación suave
+        # gentle evaporation
         self.nutrients *= 0.995
         self.toxins    *= 0.990
         np.clip(self.nutrients, 0, 120, out=self.nutrients)
         np.clip(self.toxins,    0,  60, out=self.toxins)
         np.clip(self.signals,   0, 100, out=self.signals)
 
-        # Difusión morfogenética (lenta, α=0.04) + reimposición de fuentes de borde.
-        # Los bordes actúan como fuentes/sumideros fijos → gradiente estable pero
-        # no infinitamente rígido; las células pueden perturbar localmente.
+        # Morphogenetic diffusion (slow, α=0.04) + re-imposition of boundary sources.
+        # Borders act as fixed sources/sinks → stable gradient but
+        # not infinitely rigid; cells can perturb locally.
         for arr in (self.morphogen_a, self.morphogen_b):
             lap = (np.roll(arr, 1, 0) + np.roll(arr, -1, 0) +
                    np.roll(arr, 1, 1) + np.roll(arr, -1, 1) - 4 * arr)
             arr += 0.04 * lap
-        self.morphogen_a[:, 0]  = 1.0   # fuente anterior
-        self.morphogen_a[:, -1] = 0.0   # sumidero posterior
-        self.morphogen_b[0, :]  = 1.0   # fuente dorsal
-        self.morphogen_b[-1, :] = 0.0   # sumidero ventral
+        self.morphogen_a[:, 0]  = 1.0   # anterior source
+        self.morphogen_a[:, -1] = 0.0   # posterior sink
+        self.morphogen_b[0, :]  = 1.0   # dorsal source
+        self.morphogen_b[-1, :] = 0.0   # ventral sink
         np.clip(self.morphogen_a, 0.0, 1.0, out=self.morphogen_a)
         np.clip(self.morphogen_b, 0.0, 1.0, out=self.morphogen_b)
+
+        # ── Periodic environmental perturbation (Feature E)
+        if (self.perturbation_interval > 0 and self.tick_count > 0 and
+                self.tick_count % self.perturbation_interval == 0):
+            px = self.rng.randint(0, self.W - 1)
+            py = self.rng.randint(0, self.H - 1)
+            self.deposit_toxin(px, py, self.perturbation_strength)
+            if self.sources:
+                idx = self.rng.randint(0, len(self.sources) - 1)
+                sx, sy = self.sources[idx]
+                sx = (sx + self.rng.randint(-1, 1)) % self.W
+                sy = (sy + self.rng.randint(-1, 1)) % self.H
+                self.sources[idx] = (sx, sy)
 
         self.tick_count += 1
 
@@ -226,17 +244,17 @@ class SpatialWorld:
         return float(self.nutrients[y, x]), float(self.toxins[y, x])
 
     def sample_signals(self, x: int, y: int) -> np.ndarray:
-        """Vector local de señales intercelulares en (x,y)."""
+        """Local intercellular signal vector at (x,y)."""
         x = x % self.W; y = y % self.H
         return self.signals[:, y, x].copy()
 
     def sample_morphogens(self, x: int, y: int) -> Tuple[float, float]:
-        """Devuelve (morphogen_a, morphogen_b) en (x,y) — información posicional."""
+        """Returns (morphogen_a, morphogen_b) at (x,y) — positional information."""
         x = x % self.W; y = y % self.H
         return float(self.morphogen_a[y, x]), float(self.morphogen_b[y, x])
 
     def deposit_signal(self, x: int, y: int, channel, amount: float):
-        """Deposita una señal biosemiótica local. Canal puede ser str o índice."""
+        """Deposits a local biosemiotic signal. Channel can be str or index."""
         if amount <= 0:
             return
         idx = SIGNAL_IDX[channel] if isinstance(channel, str) else int(channel)
@@ -249,7 +267,7 @@ class SpatialWorld:
         return self.gradient(x, y, self.signals[idx])
 
     def gradient(self, x: int, y: int, grid: np.ndarray) -> Tuple[float, float]:
-        """Gradiente centrado en (x,y)."""
+        """Centered gradient at (x,y)."""
         x = x % self.W; y = y % self.H
         dx = (grid[y, (x+1)%self.W] - grid[y, (x-1)%self.W]) / 2.0
         dy = (grid[(y+1)%self.H, x] - grid[(y-1)%self.H, x]) / 2.0
@@ -275,10 +293,10 @@ class SpatialWorld:
     def get_neighbor_cells(self, x: int, y: int, radius: int,
                            cells: Dict[str, "Cell"]) -> List[Dict]:
         """
-        Vecindario celular local sobre el toro espacial.
+        Local cellular neighborhood on the spatial torus.
 
-        Devuelve contexto biológico suficiente para reglas de adhesión,
-        diferenciación y vigilancia sin introducir búsqueda O(células²).
+        Returns enough biological context for adhesion, differentiation,
+        and surveillance rules without introducing O(cells²) search.
         """
         out: List[Dict] = []
         x = x % self.W; y = y % self.H
@@ -339,20 +357,20 @@ class SpatialWorld:
 
 
 # ─────────────────────────────────────────────────────────────
-# GENOMA — codifica H1, H2, H3, H4
+# GENOME — encodes H1, H2, H3, H4
 # ─────────────────────────────────────────────────────────────
 
 @dataclass
 class Genome:
     """
-    Codifica los cuatro tipos de herencia del documento formal.
+    Encodes the four inheritance types from the formal document.
 
-    H1: Herencia estructural   — propiedades de frontera y metabolismo
-    H2: Herencia regulatoria   — matriz W_reg de homeostasis
-    H3: Herencia cognitiva     — predisposiciones de pesos neuronales
-    H4: Herencia de desarrollo — tiempos de maduración y costos
+    H1: Structural inheritance   — boundary and metabolism properties
+    H2: Regulatory inheritance   — homeostasis W_reg matrix
+    H3: Cognitive inheritance    — neural weight predispositions
+    H4: Developmental inheritance — maturation timings and costs
     """
-    # H1: Herencia estructural
+    # H1: Structural inheritance
     membrane_strength:      float = 0.85
     transport_capacity:     float = 0.70
     metabolic_base_rate:    float = 0.60
@@ -363,23 +381,23 @@ class Genome:
     repair_material_cap:    float = 60.0
     reproductive_mass_cap:  float = 80.0
 
-    # H2: Herencia regulatoria — W_reg es una matriz 4×5
-    # (4 prioridades × 5 señales de error)
-    # Se almacena como lista plana de 20 floats
+    # H2: Regulatory inheritance — W_reg is a 4×5 matrix
+    # (4 priorities × 5 error signals)
+    # Stored as a flat list of 20 floats
     W_reg_flat: List[float] = field(default_factory=lambda: [
-        # fila 0: maintenance   [e_energy, e_damage, e_waste, e_boundary, e_memory]
+        # row 0: maintenance   [e_energy, e_damage, e_waste, e_boundary, e_memory]
          1.5,  0.5,  0.3,  1.2,  0.4,
-        # fila 1: repair
+        # row 1: repair
          0.3,  1.8,  0.5,  0.8,  0.6,
-        # fila 2: action
+        # row 2: action
          0.8,  0.2,  0.3,  0.2,  0.5,
-        # fila 3: reproduction
+        # row 3: reproduction
          0.4,  0.1,  0.2,  0.2,  0.1,
     ])
 
-    # H3: Herencia cognitiva — sesgos iniciales de pesos neuronales
-    # Red: 6 inputs → 4 hidden → 3 outputs
-    # Se almacena como predisposiciones (escala de inicialización)
+    # H3: Cognitive inheritance — initial neural weight biases
+    # Network: 6 inputs → 4 hidden → 3 outputs
+    # Stored as predispositions (initialization scale)
     neural_W_ih_flat: List[float] = field(default_factory=lambda:
         [random.gauss(0, 0.3) for _ in range(6*4)])  # 6×4 = 24
     neural_W_hh_flat: List[float] = field(default_factory=lambda:
@@ -387,11 +405,11 @@ class Genome:
     neural_W_ho_flat: List[float] = field(default_factory=lambda:
         [random.gauss(0, 0.3) for _ in range(4*3)])  # 4×3 = 12
 
-    # H3: tasa de plasticidad
+    # H3: plasticity rate
     neural_plasticity:      float = 0.02
     neural_excitability:    float = 0.5
 
-    # H4: Herencia de desarrollo
+    # H4: Developmental inheritance
     development_ticks:      int   = 18
     maturation_cost_rate:   float = 0.18
     repr_min_age:           int   = 55
@@ -403,9 +421,9 @@ class Genome:
     toxin_avoidance:        float = 0.7
     sensor_range:           int   = 3
 
-    # Capa heredable de comunicación: emisión, recepción y traducción corporal.
-    # Esto permite que linajes distintos desarrollen dialectos compatibles o
-    # parcialmente incompatibles sin usar lenguaje humano ni entrenamiento ML.
+    # Heritable communication layer: emission, reception and body translation.
+    # This allows distinct lineages to develop compatible or partially
+    # incompatible dialects without using human language or ML training.
     signal_emission_strength:    float = 0.55
     signal_receptor_sensitivity: float = 0.65
     signal_selectivity:          float = 0.55
@@ -413,10 +431,10 @@ class Genome:
     signal_receptor_flat: List[float] = field(default_factory=lambda:
         [random.gauss(0, 0.25) for _ in range(N_SIGNAL_CHANNELS * 4)])
 
-    # Morfogenética heredable: curvas de respuesta a gradientes posicionales.
-    # 8 floats = 2 morfógenos × 4 tipos celulares [BOUNDARY, NEURON, METABOLIC, REPAIR].
-    # Índices 0-3: respuesta al morfógeno A; 4-7: respuesta al morfógeno B.
-    # Positivo → sesga hacia ese tipo; negativo → lo inhibe.
+    # Heritable morphogenetics: response curves to positional gradients.
+    # 8 floats = 2 morphogens × 4 cell types [BOUNDARY, NEURON, METABOLIC, REPAIR].
+    # Indices 0-3: response to morphogen A; 4-7: response to morphogen B.
+    # Positive → biases toward that type; negative → inhibits it.
     morphogen_response_flat: List[float] = field(default_factory=lambda:
         [random.gauss(0.0, 0.25) for _ in range(8)])
 
@@ -482,7 +500,7 @@ class Genome:
         def mf(v, lo, hi, sigma=0.05):
             if rng.random() > fid:
                 v += rng.gauss(0, sigma * (hi - lo))
-                if rng.random() < 0.10:  # salto grande ocasional
+                if rng.random() < 0.10:  # occasional large jump
                     v += rng.gauss(0, sigma * (hi - lo) * 3)
             return max(lo, min(hi, v))
 
@@ -523,47 +541,80 @@ class Genome:
         child.morphogen_response_flat     = ml(child.morphogen_response_flat, 0.06)
         return child
 
+    def recombine(self, other: "Genome", rng: random.Random) -> "Genome":
+        """Sexual recombination: element-wise mixing of two genomes (Feature C).
+
+        Returns an unmutated offspring — mutation is applied separately in
+        build_offspring_genome / mutate(), preserving the fidelity semantics.
+        """
+        child = copy.deepcopy(self)
+        scalar_attrs = [
+            'membrane_strength', 'transport_capacity', 'metabolic_base_rate',
+            'conversion_efficiency', 'repair_capacity_base', 'waste_tolerance',
+            'structural_mass_cap', 'repair_material_cap', 'reproductive_mass_cap',
+            'neural_plasticity', 'neural_excitability', 'development_ticks',
+            'maturation_cost_rate', 'repr_min_age', 'repr_threshold_energy',
+            'repr_threshold_damage', 'fidelity', 'motility', 'chemotaxis_gain',
+            'toxin_avoidance', 'sensor_range', 'signal_emission_strength',
+            'signal_receptor_sensitivity', 'signal_selectivity', 'signal_cost_factor',
+        ]
+        for attr in scalar_attrs:
+            if rng.random() < 0.5:
+                setattr(child, attr, getattr(other, attr))
+        list_attrs = [
+            'W_reg_flat', 'neural_W_ih_flat', 'neural_W_hh_flat', 'neural_W_ho_flat',
+            'signal_receptor_flat', 'morphogen_response_flat',
+        ]
+        for attr in list_attrs:
+            a_vals = getattr(self, attr)
+            b_vals = getattr(other, attr)
+            setattr(child, attr, [
+                bv if rng.random() < 0.5 else av
+                for av, bv in zip(a_vals, b_vals)
+            ])
+        return child
+
 
 # ─────────────────────────────────────────────────────────────
-# B1: FRONTERA ACTIVA
+# B1: ACTIVE BOUNDARY
 # ─────────────────────────────────────────────────────────────
 
 @dataclass
 class Boundary:
     """
-    B1: Frontera activa.
-    Filtra entradas, regula salidas, protege interior, sostiene individuación.
+    B1: Active boundary.
+    Filters inputs, regulates outputs, protects interior, sustains individuation.
     """
-    c_integrity:            float = 1.0   # integridad total [0,1]
-    c_permeability_resource: float = 0.7  # cuánto recurso deja pasar
-    c_permeability_signal:  float = 0.8   # señales
-    c_permeability_toxin:   float = 0.15  # toxinas que entran (bajo = bueno)
-    c_transport_capacity:   float = 0.7   # cap. activa de transporte
-    c_maintenance_cost:     float = 0.05  # ATP por tick para mantenerse
-    c_permanent_damage:     float = 0.0   # daño irrecuperable
-    c_neural_gate:          float = 1.0   # modulación desde B4 [0,1]
+    c_integrity:            float = 1.0   # total integrity [0,1]
+    c_permeability_resource: float = 0.7  # how much resource passes through
+    c_permeability_signal:  float = 0.8   # signals
+    c_permeability_toxin:   float = 0.15  # toxins that enter (low = good)
+    c_transport_capacity:   float = 0.7   # active transport capacity
+    c_maintenance_cost:     float = 0.05  # ATP per tick to maintain
+    c_permanent_damage:     float = 0.0   # irrecoverable damage
+    c_neural_gate:          float = 1.0   # modulation from B4 [0,1]
 
     def degrade(self, tox_external: float, tox_internal: float,
                 age_ticks: int, genome: "Genome") -> float:
         """
-        D1: Degradación estructural de frontera.
-        Retorna daño infligido este tick.
+        D1: Structural boundary degradation.
+        Returns damage inflicted this tick.
         """
-        # daño base por toxinas externas (reducido por integridad actual)
+        # base damage from external toxins (reduced by current integrity)
         dmg_ext = tox_external * (1.0 - self.c_integrity * 0.5) * 0.002
-        # daño por toxinas internas (residuos)
+        # damage from internal toxins (waste)
         dmg_int = tox_internal * 0.0006
-        # desgaste por edad
+        # age wear
         dmg_age = age_ticks * 0.000006
-        # daño total atenuado por membrane_strength genómico
+        # total damage attenuated by genomic membrane_strength
         total_dmg = (dmg_ext + dmg_int + dmg_age) / (genome.membrane_strength + 0.1)
 
-        # aplica daño
+        # apply damage
         self.c_integrity = max(0.0, self.c_integrity - total_dmg)
-        # fracción permanente del daño acumulado (irrecuperable)
+        # permanent fraction of accumulated damage (irrecoverable)
         self.c_permanent_damage = min(0.6, self.c_permanent_damage + total_dmg * 0.08)
 
-        # permeabilidad se deteriora con integridad
+        # permeability deteriorates with integrity
         self.c_permeability_resource = 0.5 + 0.5 * self.c_integrity * genome.transport_capacity
         self.c_permeability_toxin    = 0.05 + 0.3 * (1.0 - self.c_integrity)
 
@@ -572,9 +623,9 @@ class Boundary:
     def repair(self, atp: float, structural: float,
                repair_fraction: float, genome: "Genome") -> Tuple[float, float]:
         """
-        Repara frontera usando ATP y masa estructural.
-        repair_fraction ∈ [0,1]: porción del presupuesto de reparación asignado a este bloque.
-        Retorna (atp_consumed, structural_consumed).
+        Repairs boundary using ATP and structural mass.
+        repair_fraction ∈ [0,1]: portion of repair budget assigned to this block.
+        Returns (atp_consumed, structural_consumed).
         """
         if atp <= 0 or structural <= 0:
             return 0.0, 0.0
@@ -585,7 +636,7 @@ class Boundary:
         if recovery_target <= 0:
             return 0.0, 0.0
 
-        # no puedes reparar más allá del daño irrecuperable
+        # cannot repair beyond the irrecoverable damage
         actual_repair = min(recovery_target, 1.0 - self.c_permanent_damage - self.c_integrity)
         actual_repair = max(0, actual_repair)
 
@@ -603,9 +654,9 @@ class Boundary:
         return atp_cost, mass_cost
 
     def apply_neural_gate(self, gate_signal: float):
-        """B4 modula apertura selectiva de frontera (F3 flow)."""
+        """B4 modulates selective boundary opening (F3 flow)."""
         self.c_neural_gate = max(0.2, min(1.0, gate_signal))
-        # La modulación ajusta permeabilidad de recurso
+        # Modulation adjusts resource permeability
         self.c_permeability_resource *= (0.7 + 0.3 * self.c_neural_gate)
         self.c_permeability_resource  = min(1.0, self.c_permeability_resource)
 
@@ -618,25 +669,25 @@ class Boundary:
 
 
 # ─────────────────────────────────────────────────────────────
-# B2: METABOLISMO
+# B2: METABOLISM
 # ─────────────────────────────────────────────────────────────
 
 @dataclass
 class Metabolism:
     """
-    B2: Metabolismo.
-    Cadena de 5 etapas: recurso_bruto → intermedio → ATP → masa_estructural → residuo.
-    Sin conversión perfecta. Siempre hay disipación, residuo, ineficiencia.
+    B2: Metabolism.
+    5-stage chain: raw_resource → intermediate → ATP → structural_mass → waste.
+    No perfect conversion. There is always dissipation, waste, inefficiency.
     """
-    r_raw:       float = 30.0   # recurso bruto interno
-    r_int:       float = 0.0    # intermediario metabólico
-    a_free:      float = 40.0   # ATP / energía libre
-    m_struct:    float = 20.0   # masa estructural
-    p_repair:    float = 10.0   # material reparativo
-    q_repro:     float = 0.0    # material reproductivo
-    w_waste:     float = 0.0    # residuo / carga tóxica interna
-    eta_metabolic: float = 1.0  # eficiencia metabólica [0,1] (degrada con D2)
-    phi_dissipation: float = 0.05  # tasa de disipación basal
+    r_raw:       float = 30.0   # internal raw resource
+    r_int:       float = 0.0    # metabolic intermediate
+    a_free:      float = 40.0   # ATP / free energy
+    m_struct:    float = 20.0   # structural mass
+    p_repair:    float = 10.0   # repair material
+    q_repro:     float = 0.0    # reproductive material
+    w_waste:     float = 0.0    # waste / internal toxic load
+    eta_metabolic: float = 1.0  # metabolic efficiency [0,1] (degrades with D2)
+    phi_dissipation: float = 0.05  # basal dissipation rate
 
     # caps
     r_raw_cap:  float = 120.0
@@ -646,54 +697,54 @@ class Metabolism:
     q_repro_cap:  float = 80.0
     w_waste_cap:  float = 80.0
 
-    # tracking para clausura organizacional
+    # tracking for organizational closure
     atp_produced_last_tick: float = 0.0
     waste_produced_last_tick: float = 0.0
 
     def step(self, genome: "Genome", tox_internal: float,
              maintenance_priority: float) -> Dict:
         """
-        Transforma recursos en 5 etapas.
-        maintenance_priority ∈ [0,1] viene de B3.
-        Retorna flujos del tick.
+        Transforms resources in 5 stages.
+        maintenance_priority ∈ [0,1] comes from B3.
+        Returns tick flows.
         """
-        # D2: eficiencia degradada por residuos y daño interno
+        # D2: efficiency degraded by waste and internal damage
         self.eta_metabolic = max(0.1, 1.0 - tox_internal * 0.015 - self.w_waste * 0.008)
 
-        # ── ETAPA 1: recurso bruto → intermedio
-        # maintenance_priority modula qué fracción del metabolismo está activa,
-        # pero la tasa base debe ser suficientemente alta para sostener la célula
+        # ── STAGE 1: raw resource → intermediate
+        # maintenance_priority modulates what fraction of metabolism is active,
+        # but the base rate must be high enough to sustain the cell
         rate_e1 = genome.metabolic_base_rate * self.eta_metabolic * (0.5 + 0.5 * maintenance_priority)
         converted_to_int = min(self.r_raw, self.r_raw * rate_e1 * 0.8)
         self.r_raw -= converted_to_int
-        self.r_int += converted_to_int * 0.88  # 12% perdido como calor
+        self.r_int += converted_to_int * 0.88  # 12% lost as heat
         waste_e1    = converted_to_int * 0.04
 
-        # ── ETAPA 2: intermedio → ATP
+        # ── STAGE 2: intermediate → ATP
         rate_e2 = genome.conversion_efficiency * self.eta_metabolic
         atp_from_int = min(self.r_int, self.r_int * rate_e2 * 0.90)
         self.r_int -= atp_from_int
-        atp_produced = atp_from_int * 2.2  # conversión energética
+        atp_produced = atp_from_int * 2.2  # energy conversion
         waste_e2 = atp_from_int * 0.07
         self.a_free = min(self.a_free_cap, self.a_free + atp_produced)
         self.atp_produced_last_tick = atp_produced
 
-        # ── ETAPA 3: ATP → masa estructural
-        # La prioridad de mantenimiento dirige la fracción post-producción
+        # ── STAGE 3: ATP → structural mass
+        # Maintenance priority directs the post-production fraction
         struct_alloc = 0.12 * maintenance_priority
         atp_for_struct = min(self.a_free * 0.3, self.a_free * struct_alloc)
         self.a_free -= atp_for_struct
         struct_produced = atp_for_struct * 0.65
         self.m_struct = min(self.m_struct_cap, self.m_struct + struct_produced)
 
-        # ── ETAPA 4: ATP → material reparativo
+        # ── STAGE 4: ATP → repair material
         repair_alloc = 0.08 * maintenance_priority
         atp_for_repair = min(self.a_free * 0.20, self.a_free * repair_alloc)
         self.a_free -= atp_for_repair
         repair_produced = atp_for_repair * 0.80
         self.p_repair = min(self.p_repair_cap, self.p_repair + repair_produced)
 
-        # ── ETAPA 5: excedente → material reproductivo
+        # ── STAGE 5: surplus → reproductive material
         if self.a_free > self.a_free_cap * 0.45:
             atp_for_repro = self.a_free * 0.06
             self.a_free -= atp_for_repro
@@ -702,12 +753,12 @@ class Metabolism:
         else:
             repro_produced = 0.0
 
-        # ── Residuos totales (siempre hay residuo — sin conversión perfecta)
+        # ── Total waste (there is always waste — no perfect conversion)
         total_waste = waste_e1 + waste_e2 + self.a_free * self.phi_dissipation * 0.005
         self.w_waste = min(self.w_waste_cap, self.w_waste + total_waste)
         self.waste_produced_last_tick = total_waste
 
-        # ── Disipación basal (costo de existir — reducida)
+        # ── Basal dissipation (cost of existing — reduced)
         self.a_free = max(0.0, self.a_free - self.a_free * self.phi_dissipation * 0.02)
 
         return {
@@ -747,9 +798,9 @@ class Metabolism:
         return self.a_free < 3.0
 
     def repair_efficiency(self, repair_amount: float):
-        """B6 restaura eficiencia metabólica (D2 reversal)."""
+        """B6 restores metabolic efficiency (D2 reversal)."""
         self.eta_metabolic = min(1.0, self.eta_metabolic + repair_amount * 0.04)
-        # limpia residuos internos
+        # clears internal waste
         waste_cleared = min(self.w_waste, repair_amount * 2.0)
         self.w_waste -= waste_cleared
         return waste_cleared
@@ -760,16 +811,16 @@ class Metabolism:
 
 
 # ─────────────────────────────────────────────────────────────
-# B3: HOMEOSTASIS / REGULACIÓN INTERNA
+# B3: HOMEOSTASIS / INTERNAL REGULATION
 # ─────────────────────────────────────────────────────────────
 
 class HomeostasisRegulator:
     """
-    B3: Red regulatoria.
+    B3: Regulatory network.
 
-    NO usa ifs hardcoded.
-    Señales de error → W_reg (heredable) → vector de prioridades vía softmax.
-    Las prioridades asignan ATP a: mantenimiento / reparación / acción / reproducción.
+    Does NOT use hardcoded ifs.
+    Error signals → W_reg (heritable) → priority vector via softmax.
+    Priorities assign ATP to: maintenance / repair / action / reproduction.
 
     G = {g_energy_error, g_damage_error, g_waste_error, g_boundary_error, g_memory_error,
          g_priority_maintenance, g_priority_repair, g_priority_action, g_priority_reproduction,
@@ -777,16 +828,16 @@ class HomeostasisRegulator:
     """
 
     def __init__(self, genome: "Genome"):
-        # W_reg: 4 outputs × 5 inputs — heredable (H2)
+        # W_reg: 4 outputs × 5 inputs — heritable (H2)
         self.W_reg = genome.W_reg().copy()
-        # setpoints (pueden adaptarse vía B5 memoria regulatoria)
-        self.sp_energy   = 0.65   # fracción ATP deseada
-        self.sp_damage   = 0.20   # umbral de daño tolerable
-        self.sp_waste    = 0.30   # fracción residuo tolerable
-        self.sp_boundary = 0.75   # integridad deseada
-        self.sp_memory   = 0.70   # integridad de memoria deseada
+        # setpoints (can adapt via B5 regulatory memory)
+        self.sp_energy   = 0.65   # desired ATP fraction
+        self.sp_damage   = 0.20   # tolerable damage threshold
+        self.sp_waste    = 0.30   # tolerable waste fraction
+        self.sp_boundary = 0.75   # desired integrity
+        self.sp_memory   = 0.70   # desired memory integrity
 
-        # estado G
+        # G state
         self.g_energy_error   = 0.0
         self.g_damage_error   = 0.0
         self.g_waste_error    = 0.0
@@ -795,13 +846,13 @@ class HomeostasisRegulator:
         self.g_stress         = 0.0
         self.g_regulatory_coherence = 1.0
 
-        # prioridades computadas (no hardcoded)
+        # computed priorities (not hardcoded)
         self.p_maintenance  = 0.35
         self.p_repair       = 0.25
         self.p_action       = 0.25
         self.p_reproduction = 0.15
 
-        # historial para coherencia
+        # history for coherence
         self._priority_history = []
         self._error_history    = []
 
@@ -809,10 +860,10 @@ class HomeostasisRegulator:
                damage: float, mem_integrity: float,
                mem_regulatory: np.ndarray) -> Dict:
         """
-        Actualiza señales de error y computa prioridades via W_reg.
-        mem_regulatory viene de B5 y ajusta setpoints (plasticidad regulatoria).
+        Updates error signals and computes priorities via W_reg.
+        mem_regulatory comes from B5 and adjusts setpoints (regulatory plasticity).
         """
-        # ── Señales de error (positivo = problema)
+        # ── Error signals (positive = problem)
         self.g_energy_error   = max(0, self.sp_energy   - met.atp_fraction)
         self.g_damage_error   = max(0, damage / 0.8     - self.sp_damage)
         self.g_waste_error    = max(0, met.waste_fraction - self.sp_waste)
@@ -827,13 +878,13 @@ class HomeostasisRegulator:
             self.g_memory_error
         ], dtype=np.float64)
 
-        # ── Ajuste de setpoints desde memoria regulatoria (B5 → B3)
+        # ── Setpoint adjustment from regulatory memory (B5 → B3)
         if mem_regulatory is not None and len(mem_regulatory) == 5:
-            # memoria regulatoria sesga levemente los setpoints
+            # regulatory memory slightly biases the setpoints
             self.sp_energy   = np.clip(0.65 + mem_regulatory[0] * 0.05, 0.3, 0.9)
             self.sp_boundary = np.clip(0.75 + mem_regulatory[3] * 0.05, 0.4, 0.95)
 
-        # ── Prioridades via W_reg @ error_vector → softmax
+        # ── Priorities via W_reg @ error_vector → softmax
         raw = self.W_reg @ e_vec
         raw = np.clip(raw, -8, 8)
         exp = np.exp(raw - raw.max())
@@ -844,16 +895,16 @@ class HomeostasisRegulator:
         self.p_action       = float(priorities[2])
         self.p_reproduction = float(priorities[3])
 
-        # ── Estrés sistémico = RMS de errores
+        # ── Systemic stress = RMS of errors
         self.g_stress = float(np.sqrt(np.mean(e_vec**2)))
 
-        # ── Coherencia regulatoria: estabilidad del vector de prioridades
+        # ── Regulatory coherence: stability of the priority vector
         self._priority_history.append(priorities.copy())
         if len(self._priority_history) > 20:
             self._priority_history.pop(0)
         if len(self._priority_history) >= 5:
             arr = np.array(self._priority_history[-5:])
-            # coherencia = 1 - varianza media de prioridades
+            # coherence = 1 - mean variance of priorities
             self.g_regulatory_coherence = float(
                 max(0, 1.0 - np.mean(np.std(arr, axis=0)) * 4)
             )
@@ -877,8 +928,8 @@ class HomeostasisRegulator:
 
     def adapt_W_reg(self, learning_signal: float):
         """
-        Plasticidad regulatoria: ajuste lento de W_reg por señal de memoria (B5→B3).
-        Esto permite que la estrategia de regulación evolucione dentro de la vida de la célula.
+        Regulatory plasticity: slow adjustment of W_reg by memory signal (B5→B3).
+        This allows the regulatory strategy to evolve within the cell's lifetime.
         """
         e_vec = np.array([
             self.g_energy_error, self.g_damage_error, self.g_waste_error,
@@ -886,7 +937,7 @@ class HomeostasisRegulator:
         ])
         p_vec = np.array([self.p_maintenance, self.p_repair,
                           self.p_action, self.p_reproduction])
-        # Hebb-like: refuerza conexiones que correlacionan con bajo estrés
+        # Hebb-like: reinforces connections that correlate with low stress
         if self.g_stress < 0.2:
             delta = np.outer(p_vec, e_vec) * learning_signal * 0.001
             self.W_reg += delta
@@ -913,64 +964,67 @@ class HomeostasisRegulator:
 
 
 # ─────────────────────────────────────────────────────────────
-# B4: SUSTRATO COGNITIVO-NEURONAL
+# B4: COGNITIVE-NEURAL SUBSTRATE
 # ─────────────────────────────────────────────────────────────
 
 class NeuralCore:
     """
-    B4: Sustrato cognitivo-neuronal.
-    Subsistema dentro de la célula, no ES la célula.
+    B4: Cognitive-neural substrate.
+    Subsystem within the cell, not the cell itself.
 
-    Arquitectura: 6 inputs → 4 hidden (recurrente) → 3 outputs
+    Architecture: 6 inputs → 4 hidden (recurrent) → 3 outputs
     Inputs:  [atp_frac, membrane_integrity, waste_norm, nut_local, tox_local, damage_norm]
     Outputs: [move_bias_x, move_bias_y, capture_modulation]
 
-    + Predicción interna (error predictivo t_prediction_error)
-    + STDP-like: actualiza W_ih desde error predictivo
-    + Degrada con D3 cuando energía baja o daño alto
+    + Internal prediction (predictive error t_prediction_error)
+    + STDP-like: updates W_ih from predictive error
+    + Degrades with D3 when energy is low or damage is high
 
     T = {t_internal_state, t_synaptic_matrix, t_excitation,
          t_prediction_error, t_adaptive_trace, t_action_bias}
     """
 
     def __init__(self, genome: "Genome"):
-        # Pesos sinápticos (predisposiciones heredadas H3)
+        # Synaptic weights (inherited predispositions H3)
         self.W_ih = genome.neural_W_ih().copy()  # 4×6
         self.W_hh = genome.neural_W_hh().copy()  # 4×4
         self.W_ho = genome.neural_W_ho().copy()  # 3×4
 
-        # Capa de predicción: predice próximo input (6 outputs)
+        # Prediction layer: predicts next input (6 outputs)
         self.W_pred = np.random.randn(6, 4) * 0.2  # 6×4
 
-        # Estado interno
+        # Internal state
         self.t_internal_state   = np.zeros(4)   # h_t
         self.t_excitation       = 0.0
         self.t_prediction_error = 0.0
-        self.t_adaptive_trace   = np.zeros(4)   # traza de activación
+        self.t_adaptive_trace   = np.zeros(4)   # activation trace
         self.t_action_bias      = np.zeros(3)   # outputs
 
-        # Para D3: degradación cognitiva
+        # For D3: cognitive degradation
         self.t_noise_level      = 0.0
         self.t_integrity        = 1.0
 
-        # Parámetros heredables
+        # Heritable parameters
         self.plasticity   = genome.neural_plasticity
         self.excitability = genome.neural_excitability
 
-        # Historial para memoria adaptativa
+        # History for adaptive memory
         self._last_input    = np.zeros(6)
         self._input_history: List[np.ndarray] = []
+
+        # Electrical GAP junction coupling (Feature A)
+        self.gap_current_input: float = 0.0
 
     def step(self, inputs: np.ndarray, adaptive_trace_bias: np.ndarray,
              atp_available: float) -> Dict:
         """
-        Un tick del sustrato neuronal.
+        One tick of the neural substrate.
 
         inputs: [atp_frac, membrane_integrity, waste_norm, nut_local_norm, tox_local_norm, damage_norm]
-        adaptive_trace_bias: sesgo de B5 memoria adaptativa
-        atp_available: si bajo, degrada (D3)
+        adaptive_trace_bias: bias from B5 adaptive memory
+        atp_available: if low, degrades (D3)
         """
-        # ── D3: degradación cognitiva por falta de energía
+        # ── D3: cognitive degradation from energy shortage
         if atp_available < 5.0:
             self.t_noise_level = min(1.0, self.t_noise_level + 0.02)
             self.t_integrity = max(0.1, self.t_integrity - 0.005)
@@ -978,44 +1032,46 @@ class NeuralCore:
             self.t_noise_level = max(0.0, self.t_noise_level - 0.005)
             self.t_integrity = min(1.0, self.t_integrity + 0.002)
 
-        # ruido proporcional a degradación (D3)
+        # noise proportional to degradation (D3)
         noise = np.random.randn(*inputs.shape) * self.t_noise_level * 0.3
 
-        # ── Error predictivo (predicción del input anterior)
+        # ── Predictive error (prediction of the previous input)
         if np.any(self._last_input != 0):
             predicted = np.tanh(self.W_pred @ self.t_internal_state)
             self.t_prediction_error = float(np.mean(np.abs(predicted - self._last_input)))
         else:
             self.t_prediction_error = 0.0
 
-        # ── Paso recurrente
-        # sesgo de memoria adaptativa (B5 → B4: sesgos previos de activación)
+        # ── Recurrent step
+        # adaptive memory bias (B5 → B4: previous activation biases)
         bias = adaptive_trace_bias[:4] if len(adaptive_trace_bias) >= 4 else np.zeros(4)
         noisy_input = inputs + noise
         h_new = np.tanh(
             self.W_ih @ noisy_input +
             self.W_hh @ self.t_internal_state * self.excitability +
-            bias * 0.35
+            bias * 0.35 +
+            self.gap_current_input  # GAP junction electrical coupling
         )
+        self.clear_gap_current()  # consumed this tick
         self.t_internal_state = h_new
 
         # ── Outputs
         out = np.tanh(self.W_ho @ h_new)
         self.t_action_bias = out
 
-        # ── Excitación = norma del estado
+        # ── Excitation = state norm
         self.t_excitation = float(np.mean(np.abs(h_new)))
 
-        # ── Traza adaptativa (decaying average)
+        # ── Adaptive trace (decaying average)
         self.t_adaptive_trace = 0.92 * self.t_adaptive_trace + 0.08 * h_new
 
-        # ── STDP-like: actualiza W_ih proporcional a error predictivo
+        # ── STDP-like: updates W_ih proportional to predictive error
         if self.t_prediction_error > 0.01 and atp_available > 10:
             delta_W = np.outer(h_new, noisy_input) * self.plasticity * self.t_prediction_error
             self.W_ih += delta_W
-            # también actualiza W_pred
+            # also updates W_pred
             self.W_pred += np.outer(noisy_input, h_new) * self.plasticity * 0.5
-            # clamp pesos
+            # clamp weights
             self.W_ih   = np.clip(self.W_ih,   -3, 3)
             self.W_pred = np.clip(self.W_pred,  -3, 3)
 
@@ -1024,10 +1080,10 @@ class NeuralCore:
         if len(self._input_history) > 50:
             self._input_history.pop(0)
 
-        # ── Outputs interpretados
+        # ── Interpreted outputs
         move_x    = float(out[0])  # [-1, 1]
         move_y    = float(out[1])  # [-1, 1]
-        capture_m = float((out[2] + 1) / 2)  # [0, 1] modulación de captura
+        capture_m = float((out[2] + 1) / 2)  # [0, 1] capture modulation
 
         return {
             "move_x": move_x,
@@ -1039,24 +1095,32 @@ class NeuralCore:
         }
 
     def repair_weights(self, repair_amount: float):
-        """B6 repara sustrato neuronal: reduce ruido, restaura integridad (D3 reversal)."""
+        """B6 repairs neural substrate: reduces noise, restores integrity (D3 reversal)."""
         self.t_noise_level = max(0.0, self.t_noise_level - repair_amount * 0.1)
         self.t_integrity   = min(1.0, self.t_integrity   + repair_amount * 0.03)
-        # pequeña restauración de pesos degradados
+        # small restoration of degraded weights
         self.W_ih   = np.clip(self.W_ih,   -3, 3)
         self.W_hh   = np.clip(self.W_hh,   -3, 3)
         self.W_ho   = np.clip(self.W_ho,   -3, 3)
 
     def get_heritable_predispositions(self) -> Tuple[List[float], List[float], List[float]]:
         """
-        H3: Extrae predisposiciones para transmitir a descendencia.
-        No transfiere aprendizaje completo — solo tendencias.
+        H3: Extracts predispositions for transmission to offspring.
+        Does not transfer full learning — only tendencies.
         """
-        # promedia con los pesos originales genómicos para no transferir todo el aprendizaje
+        # averages with original genomic weights to not transfer all learning
         W_ih_heir = (self.W_ih * 0.35).flatten().tolist()
         W_hh_heir = (self.W_hh * 0.35).flatten().tolist()
         W_ho_heir = (self.W_ho * 0.35).flatten().tolist()
         return W_ih_heir, W_hh_heir, W_ho_heir
+
+    def apply_gap_current(self, amount: float):
+        """Accumulates incoming electrical current from GAP junctions (Feature A)."""
+        self.gap_current_input += amount
+
+    def clear_gap_current(self):
+        """Resets the accumulated GAP current (called in step())."""
+        self.gap_current_input = 0.0
 
     def to_dict(self) -> Dict:
         return {
@@ -1070,28 +1134,28 @@ class NeuralCore:
 
 
 # ─────────────────────────────────────────────────────────────
-# B5: MEMORIA MATERIAL
+# B5: MATERIAL MEMORY
 # ─────────────────────────────────────────────────────────────
 
 class MaterialMemory:
     """
-    B5: Memoria material.
-    4 subtipos, todos causalmente activos, todos degradables, todos costosos.
+    B5: Material memory.
+    4 subtypes, all causally active, all degradable, all costly.
 
-    h_structural:  historial de integridad de frontera → alimenta prioridad de reparación
-    h_regulatory:  promedio de errores homeostáticos   → sesga setpoints de B3
-    h_adaptive:    traza de activaciones neuronales    → sesga inputs de B4
-    h_heritable:   parámetros estables heredables      → se pasa a descendencia
+    h_structural:  boundary integrity history → feeds repair priority
+    h_regulatory:  homeostatic error average  → biases B3 setpoints
+    h_adaptive:    neural activation trace    → biases B4 inputs
+    h_heritable:   stable heritable parameters → passed to offspring
 
     Mem = {h_structural, h_regulatory, h_adaptive, h_heritable, h_integrity, h_corruption_rate}
     """
 
     def __init__(self, genome: "Genome"):
-        # Subtipos
-        self.h_structural  = np.zeros(10)   # historia de boundary integrity (10 ticks)
-        self.h_regulatory  = np.zeros(5)    # promedio suavizado de errores homeostáticos
-        self.h_adaptive    = np.zeros(4)    # traza de activaciones neuronales (4 neuronas)
-        self.h_heritable   = np.array([     # parámetros heredables estables
+        # Subtypes
+        self.h_structural  = np.zeros(10)   # boundary integrity history (10 ticks)
+        self.h_regulatory  = np.zeros(5)    # smoothed average of homeostatic errors
+        self.h_adaptive    = np.zeros(4)    # neural activation trace (4 neurons)
+        self.h_heritable   = np.array([     # stable heritable parameters
             genome.membrane_strength,
             genome.metabolic_base_rate,
             genome.conversion_efficiency,
@@ -1099,49 +1163,49 @@ class MaterialMemory:
             genome.waste_tolerance,
         ])
 
-        # Integridad global de memoria
+        # Global memory integrity
         self.h_integrity       = 1.0
         self.h_corruption_rate = 0.001
 
-        # Costo de mantenimiento por tick (reducido — memoria cara pero no ruinosa)
+        # Maintenance cost per tick (reduced — memory is costly but not ruinous)
         self.maintenance_cost_per_tick = 0.08  # ATP
 
-        self._struct_ptr = 0  # puntero circular para h_structural
+        self._struct_ptr = 0  # circular pointer for h_structural
 
     def update(self, boundary_integrity: float, homeostatic_errors: Dict[str, float],
                neural_trace: np.ndarray, atp_available: float,
                waste_internal: float, damage: float) -> Dict:
         """
-        Actualiza los 4 subtipos de memoria.
-        Cuesta ATP. Degrada si no hay recursos (D4).
+        Updates the 4 memory subtypes.
+        Costs ATP. Degrades if resources are unavailable (D4).
         """
         cost_paid = 0.0
 
-        # ── D4: degradación de memoria por residuos y falta de reparación
-        # Lenta pero real — memoria tiene un cuerpo material
+        # ── D4: memory degradation from waste and lack of repair
+        # Slow but real — memory has a material body
         corruption_increment = waste_internal * 0.00008 + damage * 0.0002
         self.h_corruption_rate = min(0.015, self.h_corruption_rate + corruption_increment)
         self.h_integrity = max(0.0, self.h_integrity - self.h_corruption_rate * 0.3)
 
-        # Si hay ATP, pagar mantenimiento y conservar memoria
+        # If ATP available, pay maintenance and preserve memory
         if atp_available >= self.maintenance_cost_per_tick:
             cost_paid = self.maintenance_cost_per_tick
-            # decay de corrupción si bien mantenida
+            # corruption decay if well maintained
             self.h_corruption_rate = max(0.0005, self.h_corruption_rate - 0.002)
             self.h_integrity = min(1.0, self.h_integrity + 0.005)
         else:
-            # sin mantenimiento → corrupción activa
+            # no maintenance → active corruption
             self.h_corruption_rate = min(0.015, self.h_corruption_rate + 0.001)
 
-        # escala de actualización por integridad
+        # update scale by integrity
         update_scale = self.h_integrity
 
-        # ── h_structural: actualización circular
+        # ── h_structural: circular update
         noise_struct = np.random.randn() * self.h_corruption_rate * 0.1
         self.h_structural[self._struct_ptr] = boundary_integrity * update_scale + noise_struct
         self._struct_ptr = (self._struct_ptr + 1) % 10
 
-        # ── h_regulatory: promedio exponencial de errores homeostáticos
+        # ── h_regulatory: exponential average of homeostatic errors
         e_vec = np.array([
             homeostatic_errors.get('energy', 0),
             homeostatic_errors.get('damage', 0),
@@ -1153,11 +1217,11 @@ class MaterialMemory:
         self.h_regulatory = (0.95 * self.h_regulatory + 0.05 * e_vec * update_scale + noise_reg)
         self.h_regulatory = np.clip(self.h_regulatory, -1, 1)
 
-        # ── h_adaptive: traza de activaciones neuronales (B4 → B5)
+        # ── h_adaptive: neural activation trace (B4 → B5)
         noise_adap = np.random.randn(4) * self.h_corruption_rate * 0.05
         self.h_adaptive = (0.90 * self.h_adaptive + 0.10 * neural_trace * update_scale + noise_adap)
 
-        # ── h_heritable: degrada muy lentamente (D4/D5)
+        # ── h_heritable: degrades very slowly (D4/D5)
         noise_her = np.random.randn(5) * self.h_corruption_rate * 0.02
         self.h_heritable = np.clip(self.h_heritable + noise_her, 0.05, 1.5)
 
@@ -1168,34 +1232,34 @@ class MaterialMemory:
         }
 
     def repair_memory(self, repair_amount: float):
-        """B6 repara memoria: reduce corrupción, restaura integridad (D4 reversal)."""
+        """B6 repairs memory: reduces corruption, restores integrity (D4 reversal)."""
         self.h_corruption_rate = max(0.001, self.h_corruption_rate - repair_amount * 0.02)
         self.h_integrity       = min(1.0,   self.h_integrity        + repair_amount * 0.05)
-        # pequeña restauración de h_heritable
-        # (reparación parcial, no perfecta)
+        # small restoration of h_heritable
+        # (partial repair, not perfect)
         self.h_heritable = np.clip(self.h_heritable, 0.05, 1.5)
 
     def get_structural_repair_signal(self) -> float:
         """
-        B5 → B6: señal de memoria estructural para prioridad de reparación.
-        Si la historia muestra frontera deteriorándose → urgir más reparación.
+        B5 → B6: structural memory signal for repair priority.
+        If history shows boundary deteriorating → urge more repair.
         """
         if np.all(self.h_structural == 0):
             return 0.5
         trend = np.mean(np.diff(self.h_structural)) if len(self.h_structural) > 1 else 0
-        # tendencia negativa → señal alta de reparación
+        # negative trend → high repair signal
         return float(np.clip(0.5 - trend * 2.0, 0.0, 1.0))
 
     def get_regulatory_bias(self) -> np.ndarray:
-        """B5 → B3: sesgo regulatorio desde memoria."""
+        """B5 → B3: regulatory bias from memory."""
         return self.h_regulatory.copy()
 
     def get_adaptive_bias(self) -> np.ndarray:
-        """B5 → B4: sesgo adaptativo para cognición."""
+        """B5 → B4: adaptive bias for cognition."""
         return self.h_adaptive.copy()
 
     def get_heritable_snapshot(self) -> np.ndarray:
-        """H4/H1: parámetros heredables actuales (para reproducción)."""
+        """H4/H1: current heritable parameters (for reproduction)."""
         return self.h_heritable.copy()
 
     def to_dict(self) -> Dict:
@@ -1210,15 +1274,15 @@ class MaterialMemory:
 
 
 # ─────────────────────────────────────────────────────────────
-# B6: REPARACIÓN
+# B6: REPAIR
 # ─────────────────────────────────────────────────────────────
 
 class RepairSystem:
     """
-    B6: Sistema de reparación.
-    Repara TODOS los bloques: frontera, metabolismo, cognitivo, memoria.
-    Consume ATP y material reparativo.
-    Coordinada por prioridades de B3.
+    B6: Repair system.
+    Repairs ALL blocks: boundary, metabolism, cognitive, memory.
+    Consumes ATP and repair material.
+    Coordinated by B3 priorities.
 
     Rep = {p_capacity, p_queue_damage, p_efficiency, p_latency}
     """
@@ -1237,8 +1301,8 @@ class RepairSystem:
                 homeostasis: HomeostasisRegulator,
                 damage: float, genome: "Genome") -> Tuple[float, Dict]:
         """
-        Distribuye presupuesto de reparación entre los 4 bloques.
-        Retorna (damage_reduced, repair_log).
+        Distributes repair budget among the 4 blocks.
+        Returns (damage_reduced, repair_log).
         """
         self._ticks_since_repair += 1
         if self._ticks_since_repair < self.p_latency:
@@ -1246,7 +1310,7 @@ class RepairSystem:
 
         self._ticks_since_repair = 0
 
-        # Presupuesto total: ATP disponible × prioridad de reparación
+        # Total budget: available ATP × repair priority
         atp_budget    = met.a_free * homeostasis.p_repair * 0.20
         struct_budget = met.p_repair * homeostasis.p_repair * 0.40
 
@@ -1256,18 +1320,18 @@ class RepairSystem:
         atp_total    = met.consume_atp(atp_budget)
         struct_total = met.consume_repair_material(struct_budget)
 
-        # Señal de memoria estructural → ajusta fracción para frontera
+        # Structural memory signal → adjusts fraction for boundary
         struct_repair_signal = memory.get_structural_repair_signal()
 
-        # ── Distribución de reparación entre bloques
-        # Proporcional al daño de cada bloque + señal de memoria
+        # ── Repair distribution among blocks
+        # Proportional to each block's damage + memory signal
         dmg_boundary = max(0, 1.0 - boundary.c_integrity)
         dmg_neural   = neural.t_noise_level
         dmg_memory   = 1.0 - memory.h_integrity
         dmg_metabolic = 1.0 - met.eta_metabolic
 
         total_need = dmg_boundary + dmg_neural + dmg_memory + dmg_metabolic + 1e-9
-        # sesgo estructural desde B5
+        # structural bias from B5
         boundary_extra = struct_repair_signal * 0.2
 
         frac_boundary = (dmg_boundary / total_need + boundary_extra)
@@ -1275,12 +1339,12 @@ class RepairSystem:
         frac_memory   = dmg_memory   / total_need * (1 - boundary_extra)
         frac_metabolic= dmg_metabolic/ total_need * (1 - boundary_extra)
 
-        # normaliza
+        # normalize
         s = frac_boundary + frac_neural + frac_memory + frac_metabolic + 1e-9
         frac_boundary /= s; frac_neural /= s
         frac_memory   /= s; frac_metabolic /= s
 
-        # ── Repara cada bloque
+        # ── Repair each block
         atp_b, struct_b = boundary.repair(
             atp_total * frac_boundary, struct_total * frac_boundary,
             frac_boundary, genome
@@ -1315,27 +1379,27 @@ class RepairSystem:
 
 
 # ─────────────────────────────────────────────────────────────
-# B7: REPRODUCCIÓN Y DESARROLLO
+# B7: REPRODUCTION AND DEVELOPMENT
 # ─────────────────────────────────────────────────────────────
 
 class ReproductionModule:
     """
-    B7: Reproducción y desarrollo.
+    B7: Reproduction and development.
 
-    Condiciones (R1-R8): excedente metabólico, material estructural,
-    material reproductivo, bajo daño, residuos controlados, memoria heredable íntegra,
-    coherencia identitaria, madurez reproductiva.
+    Conditions (R1-R8): metabolic surplus, structural material,
+    reproductive material, low damage, controlled waste, intact heritable memory,
+    identity coherence, reproductive maturity.
 
-    Herencia H1-H4: estructura, regulación, cognición, desarrollo.
-    Fallos posibles: descendencia inviable/deformada, fallo completo con costo.
+    Inheritance H1-H4: structure, regulation, cognition, development.
+    Possible failures: nonviable/malformed offspring, complete failure with cost.
     """
 
     def __init__(self, genome: "Genome"):
-        self.r_maturity   = 0.0   # crece con el tiempo
-        self.r_material   = 0.0   # material reproductivo acumulado
+        self.r_maturity   = 0.0   # grows over time
+        self.r_material   = 0.0   # accumulated reproductive material
         self.r_stability  = 1.0
         self.r_failure_risk = 0.0
-        self.d_stage      = 0     # etapa de desarrollo del descendiente
+        self.d_stage      = 0     # offspring development stage
         self.d_max_stage  = genome.development_ticks
         self._replicating = False
         self._abort_count = 0
@@ -1343,37 +1407,37 @@ class ReproductionModule:
 
     def tick_maturity(self, age: int, genome: "Genome", met: Metabolism,
                       damage: float):
-        """Madura lentamente. Requiere mínima edad (H4)."""
+        """Matures slowly. Requires minimum age (H4)."""
         if age >= genome.repr_min_age:
             self.r_maturity = min(1.0, self.r_maturity + 0.012)
-        # acumula material reproductivo desde metabolismo
+        # accumulates reproductive material from metabolism
         self.r_material = min(genome.reproductive_mass_cap,
                               self.r_material + met.q_repro * 0.3)
-        # riesgo de fallo crece con daño acumulado (D5)
+        # failure risk grows with accumulated damage (D5)
         self.r_failure_risk = min(0.8, damage * 0.6 + (1 - met.eta_metabolic) * 0.3)
 
     def can_reproduce(self, met: Metabolism, boundary: Boundary,
                       memory: MaterialMemory, homeostasis: HomeostasisRegulator,
                       damage: float, identity_I: float,
                       genome: "Genome") -> bool:
-        """R1-R8: todas las condiciones deben cumplirse."""
+        """R1-R8: all conditions must be met."""
         if self._replicating:
             return False
-        # R1: excedente metabólico
+        # R1: metabolic surplus
         if met.atp_fraction < genome.repr_threshold_energy:      return False
-        # R2: material estructural
+        # R2: structural material
         if met.m_struct < genome.structural_mass_cap * 0.40:     return False
-        # R3: material reproductivo
+        # R3: reproductive material
         if self.r_material < 15.0:                                return False
-        # R4: daño bajo
+        # R4: low damage
         if damage > genome.repr_threshold_damage:                 return False
-        # R5: residuos controlados
+        # R5: controlled waste
         if met.waste_fraction > 0.45:                             return False
-        # R6: memoria heredable íntegra
+        # R6: intact heritable memory
         if memory.h_integrity < 0.50:                             return False
-        # R7: coherencia identitaria
+        # R7: identity coherence
         if identity_I < 0.40:                                     return False
-        # R8: madurez reproductiva
+        # R8: reproductive maturity
         if self.r_maturity < 0.65:                                return False
         return True
 
@@ -1383,22 +1447,22 @@ class ReproductionModule:
 
     def develop_tick(self, met: Metabolism, genome: "Genome") -> Optional[str]:
         """
-        Avanza desarrollo del descendiente.
-        Retorna: 'continue' | 'success' | 'fail' | 'abort'
+        Advances offspring development.
+        Returns: 'continue' | 'success' | 'fail' | 'abort'
         """
         if not self._replicating:
             return None
 
-        # Costo de desarrollo por tick
+        # Development cost per tick
         atp_cost = genome.maturation_cost_rate * met.a_free_cap * 0.03
         struct_cost = 1.0
         if met.a_free < atp_cost or met.m_struct < struct_cost:
-            # abortar si no hay recursos
+            # abort if no resources
             self._abort_count += 1
             if self._abort_count > 5:
                 self._replicating = False
                 self._abort_count = 0
-                # costo de aborto al progenitor
+                # abort cost to parent
                 met.consume_atp(atp_cost * 3)
                 return 'abort'
             return 'continue'
@@ -1411,7 +1475,7 @@ class ReproductionModule:
         if self.d_stage >= self.d_max_stage:
             self._replicating = False
             self._abort_count = 0
-            # fallo por riesgo acumulado
+            # failure from accumulated risk
             if self._rng.random() < self.r_failure_risk:
                 return 'fail'
             return 'success'
@@ -1423,17 +1487,17 @@ class ReproductionModule:
                                 parent_memory: MaterialMemory,
                                 rng: random.Random) -> Optional["Genome"]:
         """
-        Construye genoma del descendiente con H1-H4.
-        Puede retornar None si el material heredable está muy degradado.
+        Builds offspring genome with H1-H4.
+        May return None if heritable material is too degraded.
         """
         if parent_memory.h_integrity < 0.3:
-            # herencia tan corrupta que el descendiente es inviable
+            # inheritance so corrupt that offspring is nonviable
             return None
 
-        # Base: mutación del genoma del progenitor
+        # Base: mutation of parent genome
         child_genome = parent_genome.mutate(rng)
 
-        # H1: herencia estructural — sesgada por h_heritable de B5
+        # H1: structural inheritance — biased by B5's h_heritable
         h_her = parent_memory.get_heritable_snapshot()
         child_genome.membrane_strength     = float(np.clip(
             child_genome.membrane_strength * (0.7 + 0.3 * h_her[0]), 0.1, 1.0))
@@ -1444,7 +1508,7 @@ class ReproductionModule:
         child_genome.repair_capacity_base  = float(np.clip(
             child_genome.repair_capacity_base * (0.7 + 0.3 * h_her[3]), 0.1, 1.0))
 
-        # H2: herencia regulatoria — W_reg parcialmente del progenitor
+        # H2: regulatory inheritance — W_reg partially from parent
         W_reg_parent = parent_genome.W_reg().flatten().tolist()
         W_reg_child  = child_genome.W_reg_flat
         child_genome.W_reg_flat = [
@@ -1452,7 +1516,7 @@ class ReproductionModule:
             for p, c in zip(W_reg_parent, W_reg_child)
         ]
 
-        # H3: herencia cognitiva — predisposiciones neuronales (no aprendizaje completo)
+        # H3: cognitive inheritance — neural predispositions (not full learning)
         W_ih_pred, W_hh_pred, W_ho_pred = parent_neural.get_heritable_predispositions()
         child_genome.neural_W_ih_flat = [
             0.5 * p + 0.5 * c
@@ -1467,15 +1531,15 @@ class ReproductionModule:
             for p, c in zip(W_ho_pred, child_genome.neural_W_ho_flat)
         ]
 
-        # H4: herencia de desarrollo — del genoma ya mutado
-        # (tiempos de maduración, costos, umbrales — ya están en child_genome)
+        # H4: developmental inheritance — from the already-mutated genome
+        # (maturation timings, costs, thresholds — already in child_genome)
 
-        # Integridad heredable: si baja → descendiente debilitado
+        # Heritable integrity: if low → weakened offspring
         integrity_factor = parent_memory.h_integrity
         child_genome.membrane_strength     *= integrity_factor
         child_genome.repair_capacity_base  *= integrity_factor
 
-        # Morfogenética: herencia 60% progenitor + 40% mutado (igual que H2 regulatoria)
+        # Morphogenetics: inheritance 60% parent + 40% mutated (same as H2 regulatory)
         child_genome.morphogen_response_flat = [
             0.60 * p + 0.40 * c
             for p, c in zip(
@@ -1497,25 +1561,25 @@ class ReproductionModule:
 
 
 # ─────────────────────────────────────────────────────────────
-# B9: IDENTIDAD / INDIVIDUACIÓN
+# B9: IDENTITY / INDIVIDUATION
 # ─────────────────────────────────────────────────────────────
 
 class Identity:
     """
-    B9: Identidad / individuación.
-    No es módulo físico. Es condición sistémica computada de todos los bloques.
+    B9: Identity / individuation.
+    Not a physical module. It is a systemic condition computed from all blocks.
 
     I = f(boundary_continuity, memory_continuity, regulatory_coherence,
            structural_coherence, causal_closure_proxy)
 
-    Si I < θI_dead → muerte organizacional M3.
+    If I < θI_dead → organizational death M3.
 
     Id = {i_boundary_continuity, i_memory_continuity, i_regulatory_coherence,
           i_structural_coherence, i_causal_closure_proxy}
     """
 
-    THETA_I_DEAD = 0.18   # umbral M3
-    THETA_I_REP  = 0.40   # umbral para reproducción (R7)
+    THETA_I_DEAD = 0.18   # M3 threshold
+    THETA_I_REP  = 0.40   # threshold for reproduction (R7)
 
     def __init__(self):
         self.i_boundary_continuity   = 1.0
@@ -1530,41 +1594,41 @@ class Identity:
                 memory: MaterialMemory, homeostasis: HomeostasisRegulator,
                 neural: NeuralCore, damage: float) -> float:
         """
-        Calcula I como función ponderada de componentes de individuación.
+        Computes I as a weighted function of individuation components.
         """
-        # Continuidad de frontera
+        # Boundary continuity
         self.i_boundary_continuity = boundary.c_integrity * (1 - boundary.c_permanent_damage)
 
-        # Continuidad de memoria
+        # Memory continuity
         self.i_memory_continuity = memory.h_integrity
 
-        # Coherencia regulatoria
+        # Regulatory coherence
         self.i_regulatory_coherence = homeostasis.g_regulatory_coherence
 
-        # Coherencia estructural (metabolismo funcional)
+        # Structural coherence (functional metabolism)
         self.i_structural_coherence = met.eta_metabolic * (1 - min(1.0, damage))
 
-        # Proxy de clausura organizacional:
-        # ¿está el circuito cerrado? mide si todos los flujos están activos.
-        #   M→A: metabolismo produce ATP
+        # Organizational closure proxy:
+        # Is the circuit closed? Measures whether all flows are active.
+        #   M→A: metabolism produces ATP
         f_met_to_atp  = min(1.0, met.atp_produced_last_tick / 3.0)
-        #   A→Rep: reparación activa (usa ATP)
+        #   A→Rep: repair active (uses ATP)
         f_atp_to_rep  = 1.0 if met.a_free > 5.0 and damage < 0.8 else 0.3
-        #   Rep→B1: frontera siendo mantenida
+        #   Rep→B1: boundary being maintained
         f_rep_to_bnd  = min(1.0, boundary.c_integrity / 0.5) if boundary.c_integrity > 0 else 0.0
-        #   B1→M: frontera habilita intercambio
+        #   B1→M: boundary enables exchange
         f_bnd_to_met  = boundary.c_permeability_resource * boundary.c_integrity
-        #   Cog→acción: neural activo
+        #   Cog→action: neural active
         f_cog_to_act  = min(1.0, neural.t_excitation / 0.1) if neural.t_excitation > 0.01 else 0.2
 
-        # Proxy = media geométrica de los 5 flujos
+        # Proxy = geometric mean of the 5 flows
         flows = [f_met_to_atp, f_atp_to_rep, f_rep_to_bnd, f_bnd_to_met, f_cog_to_act]
         product = 1.0
         for f in flows:
             product *= max(0.01, f)
         self.i_causal_closure_proxy = product ** (1.0/5)
 
-        # ── I compuesta (ponderada)
+        # ── Composite I (weighted)
         self.I = (
             0.25 * self.i_boundary_continuity +
             0.20 * self.i_memory_continuity   +
@@ -1582,10 +1646,10 @@ class Identity:
 
     @property
     def is_organizationally_dead(self) -> bool:
-        """M3: muerte organizacional — identidad colapsada irreversiblemente."""
+        """M3: organizational death — identity irreversibly collapsed."""
         if len(self._history) < 10:
             return False
-        # solo M3 si sostenidamente bajo el umbral
+        # only M3 if sustained below threshold
         return all(v < self.THETA_I_DEAD for v in self._history[-8:])
 
     def to_dict(self) -> Dict:
@@ -1601,27 +1665,27 @@ class Identity:
 
 
 # ─────────────────────────────────────────────────────────────
-# B8b: COMUNICACIÓN BIOSEMIÓTICA INTERCELULAR
+# B8b: BIOSEMIOTIC INTERCELLULAR COMMUNICATION
 # ─────────────────────────────────────────────────────────────
 
 class CommunicationSystem:
     """
-    Comunicación intercelular para vida digital.
+    Intercellular communication for digital life.
 
-    No es NLP, no es embedding, no es mensajería humana. Es un sistema
-    biosemiótico mínimo:
+    Not NLP, not embeddings, not human messaging. It is a minimal
+    biosemiotic system:
 
-    1. Las células emiten señales costosas a un medio compartido.
-    2. El mundo las difunde y degrada.
-    3. Otras células las reciben según frontera + receptores heredables.
-    4. La recepción modula homeostasis, cognición, movimiento y memoria.
-    5. La señal solo "significa" algo porque altera supervivencia y conducta.
+    1. Cells emit costly signals to a shared medium.
+    2. The world diffuses and degrades them.
+    3. Other cells receive them according to boundary + heritable receptors.
+    4. Reception modulates homeostasis, cognition, movement and memory.
+    5. The signal only "means" something because it alters survival and behavior.
 
-    Estado comunicativo:
-      z_received    = señales locales percibidas
-      z_decoded     = traducción corporal por receptor heredable
-      z_social_move = sesgo vectorial de movimiento por gradientes de señal
-      z_coherence   = estabilidad reciente de señal recibida
+    Communicative state:
+      z_received    = locally perceived signals
+      z_decoded     = body translation by heritable receptor
+      z_social_move = vectorial movement bias from signal gradients
+      z_coherence   = recent stability of received signal
     """
 
     def __init__(self, genome: "Genome"):
@@ -1645,10 +1709,10 @@ class CommunicationSystem:
                 homeostasis: HomeostasisRegulator,
                 memory: MaterialMemory, damage: float) -> Dict:
         """
-        Lee señales locales + gradientes y las traduce a efectos corporales.
+        Reads local signals + gradients and translates them to body effects.
 
-        La frontera regula entrada de señales; memoria dañada y ruido interno degradan
-        comprensión. La saturación tanh impide que una señal infinita controle todo.
+        The boundary regulates signal input; damaged memory and internal noise degrade
+        comprehension. tanh saturation prevents an infinite signal from controlling everything.
         """
         raw = world.sample_signals(x, y)
         permeability = boundary.c_permeability_signal * boundary.c_integrity
@@ -1656,17 +1720,17 @@ class CommunicationSystem:
         metabolic_gate = 0.35 + 0.65 * met.atp_fraction
         received = raw * permeability * self.sensitivity * memory_gate * metabolic_gate
 
-        # Normalización biofísica: señales fuertes saturan, no escalan infinito.
+        # Biophysical normalization: strong signals saturate, they don't scale infinitely.
         norm = np.tanh(received / 18.0)
         self.z_received = norm
         self.z_signal_load = float(np.mean(norm))
 
-        # Traducción heredable a cuatro ejes corporales:
-        # [mantenimiento, reparación, acción, reproducción].
+        # Heritable translation to four body axes:
+        # [maintenance, repair, action, reproduction].
         decoded = np.tanh(self.receptor_W @ norm)
         self.z_decoded = decoded
 
-        # Gradientes: la célula no solo "oye" intensidad; detecta dirección.
+        # Gradients: the cell doesn't just "hear" intensity; it detects direction.
         def grad(ch):
             dx, dy = world.signal_gradient(x, y, ch)
             return np.array([dx, dy], dtype=np.float64)
@@ -1687,8 +1751,8 @@ class CommunicationSystem:
             social = social / norm_social
         self.z_social_move = np.clip(social * self.sensitivity, -1.0, 1.0)
 
-        # Sesgo de prioridades: lo social no reemplaza homeostasis; la perturba.
-        # Orden: [maintenance, repair, action, reproduction].
+        # Priority bias: the social does not replace homeostasis; it perturbs it.
+        # Order: [maintenance, repair, action, reproduction].
         self.z_priority_bias = np.array([
             0.08 * norm[SIGNAL_IDX["energy_need"]] + 0.04 * norm[SIGNAL_IDX["death_trace"]],
             0.10 * norm[SIGNAL_IDX["repair_need"]] + 0.08 * norm[SIGNAL_IDX["toxin_alarm"]],
@@ -1698,8 +1762,8 @@ class CommunicationSystem:
         self.z_priority_bias += decoded * 0.03
         self.z_priority_bias = np.clip(self.z_priority_bias, -0.15, 0.20)
 
-        # Coherencia = estabilidad de lo recibido; si cambia violentamente,
-        # la célula no "entiende" con seguridad.
+        # Coherence = stability of what is received; if it changes violently,
+        # the cell cannot "understand" with confidence.
         self.z_received_history.append(norm.copy())
         if len(self.z_received_history) > 16:
             self.z_received_history.pop(0)
@@ -1718,8 +1782,8 @@ class CommunicationSystem:
 
     def modulate_homeostasis(self, homeostasis: HomeostasisRegulator):
         """
-        Integra señales sociales en B3 sin sobrescribir la red regulatoria.
-        Es una perturbación pequeña y normalizada, no un if externo dominante.
+        Integrates social signals into B3 without overwriting the regulatory network.
+        It is a small, normalized perturbation, not a dominant external if.
         """
         p = np.array([
             homeostasis.p_maintenance,
@@ -1737,8 +1801,8 @@ class CommunicationSystem:
     def neural_environment_bias(self, nut_local: float, tox_local: float,
                                 damage: float) -> Tuple[float, float, float]:
         """
-        Devuelve sesgos para los tres inputs ambientales de NeuralCore:
-        nutriente, toxina, daño. Mantiene dimensionalidad 6 para no romper B4.
+        Returns biases for the three NeuralCore environmental inputs:
+        nutrient, toxin, damage. Maintains dimensionality 6 to not break B4.
         """
         resource = min(1.0, nut_local / 80.0)
         toxin = min(1.0, tox_local / 40.0)
@@ -1765,20 +1829,20 @@ class CommunicationSystem:
              identity: Identity, damage: float, nut_local: float, tox_local: float,
              phase: "LifePhase") -> Dict:
         """
-        Emite señales ancladas al estado vital. Emitir cuesta ATP, así que no es
-        telepatía gratuita ni broadcast artificial.
+        Emits signals anchored to vital state. Emitting costs ATP, so it is not
+        free telepathy or artificial broadcast.
         """
         v = np.zeros(N_SIGNAL_CHANNELS, dtype=np.float64)
 
         atp = met.atp_fraction
         waste = met.waste_fraction
 
-        # Señales positivas: solo si la célula está estable, para evitar mentiras
-        # accidentales desde organismos colapsados.
+        # Positive signals: only if the cell is stable, to avoid accidental
+        # lies from collapsed organisms.
         stability = boundary.c_integrity * memory.h_integrity * identity.I
         v[SIGNAL_IDX["nutrient_beacon"]] = max(0.0, min(1.0, nut_local / 80.0)) * stability
 
-        # Alarmas y necesidades: salen de errores homeostáticos reales.
+        # Alarms and needs: come from real homeostatic errors.
         v[SIGNAL_IDX["toxin_alarm"]] = np.clip(tox_local / 40.0 + waste * 0.7 + damage * 0.5, 0, 1)
         v[SIGNAL_IDX["energy_need"]] = np.clip(homeostasis.g_energy_error + max(0, 0.28 - atp), 0, 1)
         v[SIGNAL_IDX["repair_need"]] = np.clip(homeostasis.g_damage_error + homeostasis.g_boundary_error +
@@ -1790,26 +1854,26 @@ class CommunicationSystem:
             0, 1
         )
 
-        # Célula viva ocupa espacio: comunica saturación ecológica local.
+        # Living cell occupies space: communicates local ecological saturation.
         v[SIGNAL_IDX["crowding"]] = 0.15 + 0.35 * self.z_received[SIGNAL_IDX["crowding"]]
 
-        # Células moribundas emiten traza de colapso antes de morir.
+        # Dying cells emit collapse trace before death.
         dying = 1.0 if phase in (LifePhase.DYING, LifePhase.STRESSED) else 0.0
         v[SIGNAL_IDX["death_trace"]] = np.clip(dying * (1.0 - identity.I + damage), 0, 1)
 
-        # Selectividad: reduce ruido de señales débiles; linajes pueden ser más
-        # "parlantes" o más "reservados".
+        # Selectivity: reduces noise from weak signals; lineages can be more
+        # "talkative" or more "reserved".
         threshold = 0.08 + (1.0 - min(1.0, self.selectivity)) * 0.10
         v[v < threshold] = 0.0
 
-        # Costo energético proporcional a carga emitida.
+        # Energy cost proportional to emitted load.
         load = float(np.sum(v))
         cost = load * self.cost_factor * (1.0 + 0.5 * homeostasis.g_stress)
         paid = met.consume_atp(cost)
         if cost > 1e-9:
             v *= min(1.0, paid / cost)
 
-        # Depósito local. Los multiplicadores convierten [0,1] en concentración.
+        # Local deposit. Multipliers convert [0,1] to concentration.
         for i, amount in enumerate(v):
             if amount > 0:
                 world.deposit_signal(x, y, i, amount * self.emission_strength * 8.0)
@@ -1818,7 +1882,7 @@ class CommunicationSystem:
         return {"emitted": v, "cost": cost, "paid": paid}
 
     def repair(self, repair_amount: float):
-        """B6 también puede estabilizar receptores comunicativos."""
+        """B6 can also stabilize communicative receptors."""
         self.z_coherence = min(1.0, self.z_coherence + repair_amount * 0.04)
         self.receptor_W = np.clip(self.receptor_W, -3, 3)
 
@@ -1838,7 +1902,7 @@ class CommunicationSystem:
 
 
 # ─────────────────────────────────────────────────────────────
-# FASE DE VIDA
+# LIFE PHASE
 # ─────────────────────────────────────────────────────────────
 
 class LifePhase(Enum):
@@ -1875,10 +1939,10 @@ class JunctionKind(Enum):
 @dataclass
 class Junction:
     """
-    Relación persistente entre dos células.
+    Persistent relationship between two cells.
 
-    Esto es el primer objeto que convierte señales de campo en topología
-    biológica: vínculo con costo, estabilidad, capacidad y memoria mínima.
+    This is the first object that converts field signals into biological
+    topology: a bond with cost, stability, capacity, and minimal memory.
     """
     id: str
     cell_a: str
@@ -1927,7 +1991,7 @@ class Junction:
 
 @dataclass
 class OrganismInstance:
-    """Unidad multicelular causal derivada de un componente conectado."""
+    """Causal multicellular unit derived from a connected component."""
     organism_id: str
     member_cell_ids: Set[str]
     junction_ids: Set[str]
@@ -1943,6 +2007,7 @@ class OrganismInstance:
     topology_integrity: float
     metabolic_exchange: float
     neural_coordination: float
+    collective_motor_output: Tuple[float, float, float] = field(default_factory=lambda: (0.0, 0.0, 0.0))
 
     def evolutionary_score(self) -> float:
         size_term = math.log1p(len(self.member_cell_ids))
@@ -1969,16 +2034,17 @@ class OrganismInstance:
             "metabolic_exchange": round(self.metabolic_exchange, 3),
             "neural_coordination": round(self.neural_coordination, 3),
             "evolutionary_score": round(self.evolutionary_score(), 3),
+            "collective_motor_output": [round(v, 3) for v in self.collective_motor_output],
         }
 
 
 @dataclass
 class OrganismState:
     """
-    Estado causal de la organización multicelular.
+    Causal state of the multicellular organization.
 
-    No reemplaza a las células. Mide si existe una unidad superior con
-    topología, intercambio, roles y presión regulatoria propia.
+    Does not replace cells. Measures whether a superior unit exists with
+    its own topology, exchange, roles, and regulatory pressure.
     """
     organism_id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
     member_cell_ids: Set[str] = field(default_factory=set)
@@ -2154,6 +2220,23 @@ class OrganismState:
         else:
             stage = "integrated"
 
+        # ── Collective motor output (Feature B): identity-weighted average
+        # of neural outputs from NEURON and MOTOR cells of the organism.
+        neural_motor = [c for c in members
+                        if c.cell_type in (CellType.NEURON, CellType.MOTOR)]
+        if neural_motor:
+            w_total = sum(c.identity.I for c in neural_motor) + 1e-9
+            mx = sum(float(c.neural.t_action_bias[0]) * c.identity.I for c in neural_motor) / w_total
+            my = sum(float(c.neural.t_action_bias[1]) * c.identity.I for c in neural_motor) / w_total
+            mm = sum(float(c.neural.t_action_bias[2]) * c.identity.I for c in neural_motor) / w_total
+            cmo: Tuple[float, float, float] = (
+                float(np.clip(mx, -1.0, 1.0)),
+                float(np.clip(my, -1.0, 1.0)),
+                float(np.clip(mm, -1.0, 1.0)),
+            )
+        else:
+            cmo = (0.0, 0.0, 0.0)
+
         return OrganismInstance(
             organism_id=oid,
             member_cell_ids=set(comp),
@@ -2170,6 +2253,7 @@ class OrganismState:
             topology_integrity=topology_integrity,
             metabolic_exchange=metabolic_exchange,
             neural_coordination=neural_coordination,
+            collective_motor_output=cmo,
         )
 
     def update(self, cells: Dict[str, "Cell"], junctions: Dict[str, Junction]):
@@ -2244,24 +2328,24 @@ class OrganismState:
 
 
 # ─────────────────────────────────────────────────────────────
-# CÉLULA — integra los 9 bloques
+# CELL — integrates the 9 blocks
 # ─────────────────────────────────────────────────────────────
 
 class Cell:
     """
-    CNDV: Célula Neuronal Digital Viva.
+    CNDV: Living Digital Neural Cell.
 
-    Integra B1-B9 en tick-order estricto del documento arquitectónico:
-    1. intercambio con entorno        (B1 + B8)
-    2. transformación metabólica      (B2)
-    3. acumulación de residuo y daño  (D1-D7)
-    4. actualización homeostática     (B3)
-    5. reparación priorizada          (B6)
-    6. cognición y acción             (B4)
-    7. actualización de memoria       (B5)
-    8. evaluación de viabilidad       (B9)
-    9. evaluación de reproducción     (B7)
-    10. muerte si organización no recuperable (M1, M2, M3)
+    Integrates B1-B9 in strict tick-order from the architectural document:
+    1. exchange with environment       (B1 + B8)
+    2. metabolic transformation        (B2)
+    3. waste and damage accumulation   (D1-D7)
+    4. homeostatic update              (B3)
+    5. prioritized repair              (B6)
+    6. cognition and action            (B4)
+    7. memory update                   (B5)
+    8. viability evaluation            (B9)
+    9. reproduction evaluation         (B7)
+    10. death if organization is unrecoverable (M1, M2, M3)
     """
 
     def __init__(self, x: int, y: int, world: SpatialWorld,
@@ -2275,7 +2359,7 @@ class Cell:
         self.rng   = rng or random.Random()
         self.genome = genome or Genome.create(self.rng)
 
-        # ── 9 Bloques
+        # ── 9 Blocks
         self.boundary    = Boundary(
             c_integrity=0.6 if developing else 1.0,
             c_permeability_resource=0.7 * self.genome.transport_capacity,
@@ -2294,8 +2378,8 @@ class Cell:
         self.reproduction = ReproductionModule(self.genome)
         self.identity    = Identity()
 
-        # Estado global S(t)
-        self.damage_X    = 0.0   # daño acumulado total
+        # Global state S(t)
+        self.damage_X    = 0.0   # total accumulated damage
         self.age_ticks   = 0
         self.phase       = LifePhase.DEVELOPING if developing else LifePhase.ACTIVE
         self.alive       = True
@@ -2303,7 +2387,7 @@ class Cell:
         self.cell_type   = CellType.STEM if developing else CellType.METABOLIC
         self.type_commitment = 0.15 if developing else 0.35
 
-        # Capa multicelular: vínculos persistentes, cooperación y vigilancia.
+        # Multicellular layer: persistent bonds, cooperation and surveillance.
         self.junction_ids: Set[str] = set()
         self.attachment_strength = 0.0
         self.organism_id: Optional[str] = None
@@ -2317,7 +2401,7 @@ class Cell:
         self.cheater_score = 0.0
         self.unauthorized_reproduction_attempts = 0
 
-        # Historial
+        # History
         self.event_log: List[str] = []
         self.metrics_history: List[Dict] = []
         self._starving_ticks = 0
@@ -2326,13 +2410,13 @@ class Cell:
         world.register(x, y, self.id)
 
     # ─────────────────────────────────────────────────────────
-    # TICK PRINCIPAL
+    # MAIN TICK
     # ─────────────────────────────────────────────────────────
 
     def tick(self) -> Optional["Cell"]:
         """
-        Ejecuta un tick completo en el orden del documento arquitectónico.
-        Retorna una célula hija si hay reproducción exitosa, None si no.
+        Executes a full tick in the order of the architectural document.
+        Returns an offspring cell if reproduction is successful, None otherwise.
         """
         if not self.alive:
             return None
@@ -2341,36 +2425,36 @@ class Cell:
         offspring = None
 
         # ──────────────────────────────────────────────────────
-        # PASO 1: Intercambio con entorno (B1 + B8)
+        # STEP 1: Exchange with environment (B1 + B8)
         # ──────────────────────────────────────────────────────
         nut_local, tox_local = self.world.sample(self.x, self.y)
 
-        # Recepción comunicativa situada: la célula percibe el campo social antes
-        # de decidir captura, reparación y movimiento.
+        # Situated communicative reception: the cell perceives the social field before
+        # deciding on capture, repair, and movement.
         comm_in = self.communication.receive(
             self.world, self.x, self.y,
             self.boundary, self.metabolism, self.homeostasis,
             self.memory, self.damage_X
         )
 
-        # La frontera filtra lo que entra
-        # Recurso que entra: modulado por integridad + capacidad de transporte + neural_gate
+        # The boundary filters what enters
+        # Incoming resource: modulated by integrity + transport capacity + neural_gate
         capture_base = (nut_local * self.boundary.c_permeability_resource *
                         self.boundary.c_transport_capacity)
 
-        # El módulo neuronal contribuirá su capture_modulation después del paso 6,
-        # pero usamos la última señal disponible (del tick anterior)
+        # The neural module will contribute its capture_modulation after step 6,
+        # but we use the last available signal (from the previous tick)
         capture_mod = float((self.neural.t_action_bias[2] + 1) / 2) if np.any(
             self.neural.t_action_bias != 0) else 0.5
 
-        # Captura real — sin doble multiplicación de transport
+        # Actual capture — without double transport multiplication
         social_capture = 1.0 + 0.18 * self.communication.z_received[SIGNAL_IDX["nutrient_beacon"]]
         resource_captured = min(nut_local * 0.60, capture_base * (0.6 + 0.4 * capture_mod) * social_capture)
         resource_captured = self.world.consume_nutrient(self.x, self.y, resource_captured)
         self.metabolism.r_raw = min(self.metabolism.r_raw_cap,
                                     self.metabolism.r_raw + resource_captured)
 
-        # Toxinas que entran a través de frontera dañada
+        # Toxins entering through damaged boundary
         tox_entering = tox_local * self.boundary.c_permeability_toxin
         self.metabolism.w_waste = min(
             self.metabolism.w_waste_cap,
@@ -2378,7 +2462,7 @@ class Cell:
         )
 
         # ──────────────────────────────────────────────────────
-        # PASO 2: Transformación metabólica (B2)
+        # STEP 2: Metabolic transformation (B2)
         # ──────────────────────────────────────────────────────
         met_out = self.metabolism.step(
             self.genome,
@@ -2386,39 +2470,39 @@ class Cell:
             maintenance_priority=self.homeostasis.p_maintenance
         )
 
-        # Excreción de residuos al entorno
+        # Waste excretion to the environment
         waste_excreted = self.metabolism.w_waste * 0.04 * self.boundary.c_integrity
         self.metabolism.w_waste -= waste_excreted
         self.world.deposit_toxin(self.x, self.y, waste_excreted * 0.5)
 
         # ──────────────────────────────────────────────────────
-        # PASO 3: Acumulación de daño (D1-D7)
+        # STEP 3: Damage accumulation (D1-D7)
         # ──────────────────────────────────────────────────────
-        # D1: Frontera
+        # D1: Boundary
         dmg_boundary = self.boundary.degrade(
             tox_local, self.metabolism.w_waste, self.age_ticks, self.genome
         )
 
-        # D2: Metabólico — ya aplicado dentro de metabolism.step()
+        # D2: Metabolic — already applied inside metabolism.step()
 
-        # D6: Ecológico — escasez local degrada gradualmente
+        # D6: Ecological — local scarcity degrades gradually
         if nut_local < 5.0:
             self.damage_X = min(1.0, self.damage_X + 0.003)
 
-        # D7: Organizacional — si clausura rota, se añade daño difuso
+        # D7: Organizational — if closure broken, diffuse damage is added
         if self.identity.i_causal_closure_proxy < 0.3:
             self.damage_X = min(1.0, self.damage_X + 0.005)
 
-        # Daño total acumulado
+        # Total accumulated damage
         self.damage_X = min(1.0, self.damage_X + dmg_boundary * 0.5)
 
-        # Costo de mantenimiento de frontera
+        # Boundary maintenance cost
         boundary_maint = self.metabolism.consume_atp(
             self.boundary.c_maintenance_cost * self.metabolism.a_free_cap * 0.01
         )
 
         # ──────────────────────────────────────────────────────
-        # PASO 4: Actualización homeostática (B3)
+        # STEP 4: Homeostatic update (B3)
         # ──────────────────────────────────────────────────────
         mem_reg_bias = self.memory.get_regulatory_bias()  # B5 → B3
         hom_out = self.homeostasis.update(
@@ -2426,15 +2510,15 @@ class Cell:
             self.damage_X, self.memory.h_integrity,
             mem_reg_bias
         )
-        # Plasticidad regulatoria: W_reg aprende lentamente
+        # Regulatory plasticity: W_reg learns slowly
         self.homeostasis.adapt_W_reg(
             learning_signal=self.memory.h_integrity * 0.1
         )
-        # Señales sociales sesgan suavemente la homeostasis, sin reemplazarla.
+        # Social signals gently bias homeostasis, without replacing it.
         self.communication.modulate_homeostasis(self.homeostasis)
 
         # ──────────────────────────────────────────────────────
-        # PASO 5: Reparación priorizada (B6)
+        # STEP 5: Prioritized repair (B6)
         # ──────────────────────────────────────────────────────
         dmg_reduced, rep_log = self.repair.execute(
             self.metabolism, self.boundary, self.neural, self.memory,
@@ -2445,9 +2529,9 @@ class Cell:
             self.communication.repair(dmg_reduced)
 
         # ──────────────────────────────────────────────────────
-        # PASO 6: Cognición y acción (B4)
+        # STEP 6: Cognition and action (B4)
         # ──────────────────────────────────────────────────────
-        # Inputs normalizados del estado interno y entorno
+        # Normalized inputs from internal state and environment
         sig_nut, sig_tox, sig_damage = self.communication.neural_environment_bias(
             nut_local, tox_local, self.damage_X
         )
@@ -2462,8 +2546,8 @@ class Cell:
 
         adaptive_bias = self.memory.get_adaptive_bias()  # B5 → B4
         if np.any(self.synaptic_input):
-            # Entrada intercelular directa. Se inyecta como sesgo interno, no como
-            # nutriente/toxina fingidos, para mantener separadas fisiología y sinapsis.
+            # Direct intercellular input. Injected as internal bias, not as
+            # fake nutrient/toxin, to keep physiology and synapses separate.
             adaptive_bias = adaptive_bias + np.clip(self.synaptic_input, -1.0, 1.0)
             self.synaptic_input *= 0.35
 
@@ -2482,21 +2566,21 @@ class Cell:
         else:
             self.spike_output = 0.0
 
-        # Acción: movimiento guiado por neuronal + quimiotaxis (B8)
+        # Action: neurally guided movement + chemotaxis (B8)
         self._move(neural_out, nut_local, tox_local)
 
-        # Modulación de frontera por cognición (F3: B4 → B1)
+        # Boundary modulation by cognition (F3: B4 → B1)
         gate_signal = float((neural_out['capture_modulation'] +
                             self.boundary.c_integrity) / 2)
         self.boundary.apply_neural_gate(gate_signal)
 
-        # Costo cognitivo (real pero contenido)
+        # Cognitive cost (real but contained)
         self.metabolism.consume_atp(
             self.neural.t_excitation * 0.3 * self.homeostasis.p_action
         )
 
         # ──────────────────────────────────────────────────────
-        # PASO 7: Actualización de memoria (B5)
+        # STEP 7: Memory update (B5)
         # ──────────────────────────────────────────────────────
         mem_out = self.memory.update(
             boundary_integrity=self.boundary.c_integrity,
@@ -2506,22 +2590,22 @@ class Cell:
             waste_internal=self.metabolism.w_waste,
             damage=self.damage_X
         )
-        # Pagar costo de mantenimiento de memoria
+        # Pay memory maintenance cost
         self.metabolism.consume_atp(mem_out.get('maintenance_cost', 0))
 
         # ──────────────────────────────────────────────────────
-        # PASO 8: Evaluación de viabilidad (B9)
+        # STEP 8: Viability evaluation (B9)
         # ──────────────────────────────────────────────────────
         I = self.identity.compute(
             self.boundary, self.metabolism, self.memory,
             self.homeostasis, self.neural, self.damage_X
         )
 
-        # Actualizar fase según estado
+        # Update phase according to state
         self._update_phase()
 
-        # Emisión comunicativa: ocurre después de computar identidad para que
-        # la señal enviada refleje el estado organizacional actual.
+        # Communicative emission: occurs after computing identity so that
+        # the sent signal reflects the current organizational state.
         comm_out = self.communication.emit(
             self.world, self.x, self.y,
             self.metabolism, self.boundary, self.homeostasis,
@@ -2530,7 +2614,7 @@ class Cell:
         )
 
         # ──────────────────────────────────────────────────────
-        # PASO 9: Evaluación de reproducción (B7)
+        # STEP 9: Reproduction evaluation (B7)
         # ──────────────────────────────────────────────────────
         self.reproduction.tick_maturity(self.age_ticks, self.genome,
                                         self.metabolism, self.damage_X)
@@ -2557,61 +2641,61 @@ class Cell:
                 self._log("REPRODUCTION_ABORTED:no_resources")
 
         # ──────────────────────────────────────────────────────
-        # PASO 10: Verificación de muerte (M1, M2, M3)
+        # STEP 10: Death check (M1, M2, M3)
         # ──────────────────────────────────────────────────────
         self._check_death()
 
-        # Registro de métricas
+        # Metrics recording
         self._record_metrics()
 
         return offspring
 
     # ─────────────────────────────────────────────────────────
-    # MOVIMIENTO (B8)
+    # MOVEMENT (B8)
     # ─────────────────────────────────────────────────────────
 
     def _move(self, neural_out: Dict, nut_local: float, tox_local: float):
         """
-        B8: Movimiento guiado por output neuronal + quimiotaxis.
-        La célula integra señales propias (B4) con gradientes del mundo.
+        B8: Movement guided by neural output + chemotaxis.
+        The cell integrates its own signals (B4) with world gradients.
         """
         if self.metabolism.a_free < 2.0:
-            return  # sin energía no se mueve
+            return  # no energy, no movement
 
         sr = self.genome.sensor_range
 
-        # Gradientes de nutrientes y toxinas
+        # Nutrient and toxin gradients
         dnut_x, dnut_y = self.world.gradient(self.x, self.y, self.world.nutrients)
         dtox_x, dtox_y = self.world.gradient(self.x, self.y, self.world.toxins)
 
-        # Señal neural de movimiento (B4 output)
+        # Neural movement signal (B4 output)
         neural_x = neural_out['move_x'] * self.genome.motility
         neural_y = neural_out['move_y'] * self.genome.motility
 
-        # Quimiotaxis: atracción a nutrientes, repulsión de toxinas
+        # Chemotaxis: attraction to nutrients, repulsion from toxins
         chemotaxis_x = (dnut_x * self.genome.chemotaxis_gain -
                         dtox_x * self.genome.toxin_avoidance)
         chemotaxis_y = (dnut_y * self.genome.chemotaxis_gain -
                         dtox_y * self.genome.toxin_avoidance)
 
-        # Comunicación: gradientes de señales de otras células.
-        # No domina; orienta cuando hay recurso, alarma, muerte o saturación social.
+        # Communication: signal gradients from other cells.
+        # Does not dominate; orients when there is resource, alarm, death, or social saturation.
         social_x, social_y = self.communication.z_social_move
 
-        # Integración: neuronal domina, quimiotaxis y comunicación como sesgos vivos
+        # Integration: neural dominates, chemotaxis and communication as living biases
         total_x = 0.52 * neural_x + 0.30 * chemotaxis_x + 0.18 * social_x
         total_y = 0.52 * neural_y + 0.30 * chemotaxis_y + 0.18 * social_y
         if self.attachment_strength > 0.0:
-            # Una célula adherida ya no es una partícula libre. La adhesión no
-            # implementa movimiento colectivo completo, pero sí hace costoso y
-            # raro romper una topología estable por desplazamiento individual.
+            # An adhered cell is no longer a free particle. Adhesion does not
+            # implement full collective movement, but it makes it costly and
+            # rare to break a stable topology by individual displacement.
             drag = np.clip(self.attachment_strength, 0.0, 0.9)
             total_x *= (1.0 - 0.55 * drag)
             total_y *= (1.0 - 0.55 * drag)
             if self.attachment_strength > 0.72 and self.rng.random() > 0.06:
                 return
 
-        # Normaliza dirección
+        # Normalize direction
         mag = math.sqrt(total_x**2 + total_y**2) + 1e-9
         if mag > 0.3:
             nx = int(round(total_x / mag))
@@ -2625,11 +2709,11 @@ class Cell:
         new_x = (self.x + nx) % self.world.W
         new_y = (self.y + ny) % self.world.H
 
-        # Costo de movimiento (reducido)
+        # Movement cost (reduced)
         move_cost = 0.15 + self.genome.motility * 0.1 + self.attachment_strength * 0.25
         actual = self.metabolism.consume_atp(move_cost)
         if actual < move_cost * 0.5:
-            return  # no alcanza el ATP
+            return  # insufficient ATP
 
         if not self.world.is_occupied(new_x, new_y):
             self.world.unregister(self.x, self.y)
@@ -2638,18 +2722,18 @@ class Cell:
             self.world.register(self.x, self.y, self.id)
 
     # ─────────────────────────────────────────────────────────
-    # DESCENDENCIA (B7 spawn)
+    # OFFSPRING (B7 spawn)
     # ─────────────────────────────────────────────────────────
 
     def _spawn_offspring(self) -> Optional["Cell"]:
-        """Crea y posiciona descendiente. La reproducción no copia estado completo."""
+        """Creates and positions offspring. Reproduction does not copy full state."""
         child_genome = self.reproduction.build_offspring_genome(
             self.genome, self.neural, self.memory, self.rng
         )
         if child_genome is None:
             return None
 
-        # Buscar posición adyacente libre
+        # Search for free adjacent position
         candidates = [(self.x + dx, self.y + dy)
                       for dx in [-1, 0, 1] for dy in [-1, 0, 1]
                       if (dx, dy) != (0, 0)]
@@ -2658,7 +2742,7 @@ class Cell:
         for cx, cy in candidates:
             cx = cx % self.world.W; cy = cy % self.world.H
             if not self.world.is_occupied(cx, cy):
-                # Costo al progenitor
+                # Cost to parent
                 self.metabolism.consume_atp(4.0)
                 self.metabolism.consume_structural(2.5)
                 self.damage_X = min(1.0, self.damage_X + 0.04)
@@ -2672,59 +2756,59 @@ class Cell:
         return None
 
     # ─────────────────────────────────────────────────────────
-    # VERIFICACIÓN DE MUERTE
+    # DEATH CHECK
     # ─────────────────────────────────────────────────────────
 
     def _check_death(self):
         """
-        M1: Muerte metabólica
-        M2: Muerte estructural
-        M3: Muerte organizacional
+        M1: Metabolic death
+        M2: Structural death
+        M3: Organizational death
         """
-        # M1: energía críticamente baja por tiempo sostenido
+        # M1: critically low energy for sustained period
         if self.metabolism.is_starving:
             self._starving_ticks += 1
             if self._starving_ticks > 15:
-                self._die("M1_metabolica")
+                self._die("M1_metabolic")
                 return
         else:
             self._starving_ticks = max(0, self._starving_ticks - 1)
 
-        # M1b: residuos tóxicos terminales
+        # M1b: terminal toxic waste
         if self.metabolism.w_waste > self.metabolism.w_waste_cap * 0.90:
-            self._die("M1_intoxicacion")
+            self._die("M1_intoxication")
             return
 
-        # M2: colapso estructural de frontera
+        # M2: structural boundary collapse
         if self.boundary.is_dead:
             self._die("M2_structural")
             return
 
-        # M2b: daño sistémico irrecuperable
+        # M2b: irrecoverable systemic damage
         if self.damage_X > 0.95:
             self._die("M2_damage")
             return
 
-        # M3: muerte organizacional (identidad colapsada sostenidamente)
+        # M3: organizational death (identity collapsed sustainedly)
         if self.identity.is_organizationally_dead:
-            self._die("M3_organizacional")
+            self._die("M3_organizational")
             return
 
     def _die(self, cause: str):
         self.alive = False
         self.death_cause = cause
         self.phase = LifePhase.DEAD
-        # necroseñal: la muerte también informa al medio.
+        # necrosignal: death also informs the environment.
         if hasattr(self.world, "deposit_signal"):
             self.world.deposit_signal(self.x, self.y, "death_trace", 35.0)
         self.world.unregister(self.x, self.y)
-        # devuelve algo de nutrientes al entorno (materia no se destruye)
+        # returns some nutrients to the environment (matter is not destroyed)
         self.world.deposit_nutrient(self.x, self.y,
             self.metabolism.r_raw * 0.4 + self.metabolism.m_struct * 0.2)
         self._log(f"DEAD:{cause}")
 
     # ─────────────────────────────────────────────────────────
-    # FASE Y LOGS
+    # PHASE AND LOGS
     # ─────────────────────────────────────────────────────────
 
     def _update_phase(self):
@@ -2779,7 +2863,7 @@ class Cell:
             "alive": self.alive,
             "death_cause": self.death_cause,
             "position": {"x": self.x, "y": self.y},
-            # Estado S(t)
+            # State S(t)
             "S": {
                 "C": round(self.boundary.c_integrity, 3),
                 "A": round(self.metabolism.atp_fraction, 3),
@@ -2789,7 +2873,7 @@ class Cell:
                 "X": round(self.damage_X, 3),
                 "I": round(self.identity.I, 3),
             },
-            # Bloques
+            # Blocks
             "B1_boundary":    self.boundary.to_dict(),
             "B2_metabolism":  self.metabolism.to_dict(),
             "B3_homeostasis": self.homeostasis.to_dict(),
@@ -2809,14 +2893,14 @@ class Cell:
                 "received_support": round(self.received_support, 3),
                 "cheater_score": round(self.cheater_score, 3),
             },
-            # Historial
+            # History
             "events": self.event_log[-10:],
             "metrics_history": self.metrics_history[-10:]
         }
 
 
 # ─────────────────────────────────────────────────────────────
-# COLONIA
+# COLONY
 # ─────────────────────────────────────────────────────────────
 
 class Colony:
@@ -2844,7 +2928,7 @@ class Colony:
         for attempt in range(200):
             if placed >= n:
                 break
-            # Spawn cerca de fuentes de nutrientes
+            # Spawn near nutrient sources
             if sources:
                 sx, sy = sources[attempt % len(sources)]
                 x = sx + self.rng.randint(-3, 3)
@@ -2857,7 +2941,7 @@ class Colony:
                 g = Genome.create(self.rng)
                 cell = Cell(x, y, self.world, g,
                             rng=random.Random(self.rng.randint(0, 2**31)))
-                # Recursos iniciales más generosos para células primordiales
+                # More generous initial resources for primordial cells
                 cell.metabolism.r_raw  = 50.0
                 cell.metabolism.a_free = 60.0
                 self.cells[cell.id] = cell
@@ -2865,8 +2949,8 @@ class Colony:
 
     def spawn_primordial_from_genome(self, n: int, genome: "Genome"):
         """
-        Como spawn_primordial pero todas las células descienden de un genoma fundador.
-        Usado por EvolutionEngine para sembrar colonias de reemplazo con el genoma ganador.
+        Like spawn_primordial but all cells descend from a founding genome.
+        Used by EvolutionEngine to seed replacement colonies with the winning genome.
         """
         sources = self.world.sources
         placed = 0
@@ -2894,10 +2978,11 @@ class Colony:
         self.world.tick()
         self.tick_count += 1
         self._deliver_synaptic_events()
+        self._propagate_gap_currents()   # Feature A: GAP electrical coupling
         self._maintain_junctions_and_share()
         self._update_attachment_strengths()
 
-        # Tick todas las células vivas
+        # Tick all living cells
         to_add: List[Cell] = []
         to_remove: List[str] = []
 
@@ -2933,6 +3018,7 @@ class Colony:
         self._queue_synaptic_events()
         self._police_cells()
         self.organism.update(self.cells, self.junctions)
+        self._apply_collective_motor_bias()   # Feature B: collective agency
         self._apply_organism_pressure()
         self._try_organism_reproduction()
 
@@ -2941,7 +3027,7 @@ class Colony:
         return None
 
     # ─────────────────────────────────────────────────────────
-    # CAPA MULTICELULAR
+    # MULTICELLULAR LAYER
     # ─────────────────────────────────────────────────────────
 
     def _junction_key(self, kind: JunctionKind, a: str, b: str) -> Tuple[str, str, str]:
@@ -3156,8 +3242,8 @@ class Colony:
         elif b.metabolism.p_repair > a.metabolism.p_repair + 8 and a.damage_X > b.damage_X:
             move_resource("p_repair", "p_repair_cap", b, a, cap * 1.1, 1.2)
 
-        # Detoxificación cooperativa: la célula menos cargada absorbe una fracción
-        # pequeña del residuo de una vecina más intoxicada. No destruye masa.
+        # Cooperative detoxification: the less-loaded cell absorbs a small fraction
+        # of the waste from a more intoxicated neighbor. Does not destroy mass.
         if a.metabolism.waste_fraction > b.metabolism.waste_fraction + 0.18 and b.metabolism.waste_fraction < 0.55:
             actual = min(a.metabolism.w_waste, cap * 0.9,
                          max(0.0, b.metabolism.w_waste_cap - b.metabolism.w_waste))
@@ -3182,6 +3268,49 @@ class Colony:
                 if jid in self.junctions and self.junctions[jid].kind == JunctionKind.ADHESION
             ]
             c.attachment_strength = float(np.clip(sum(strengths) / 3.0, 0.0, 1.0))
+
+    def _propagate_gap_currents(self):
+        """Feature A: propagates electrical current through GAP junctions before the cell tick.
+
+        GAP junctions transmit electrical excitation instantaneously
+        (same tick), unlike chemical synapses (1-tick delay).
+        This enables the formation of real neural circuits between cells.
+        """
+        for j in self.junctions.values():
+            if j.kind != JunctionKind.GAP:
+                continue
+            a = self.cells.get(j.cell_a)
+            b = self.cells.get(j.cell_b)
+            if a is None or b is None or not a.alive or not b.alive:
+                continue  # pragma: no cover - bare continue not traced on Python 3.9
+            if a.spike_output > 0.0:
+                b.neural.apply_gap_current(j.signal_conductance * a.spike_output)
+            if b.spike_output > 0.0:
+                a.neural.apply_gap_current(j.signal_conductance * b.spike_output)
+
+    def _apply_collective_motor_bias(self):
+        """Feature B: applies the collective motor output of the organism to SENSORY cells.
+
+        The aggregated neural state of NEURON/MOTOR cells in the organism biases
+        the movement of SENSORY cells, materializing collective agency.
+        Only acts when there is sufficient neural coordination and identity cohesion.
+        """
+        for org in self.organism.organisms:
+            if org.collective_identity <= 0.35 or len(org.member_cell_ids) < 3:
+                continue
+            scale = org.neural_coordination
+            if scale < 1e-6:
+                continue
+            dx_bias, dy_bias, _ = org.collective_motor_output
+            for cid in org.member_cell_ids:
+                c = self.cells.get(cid)
+                if c is None or not c.alive or c.cell_type != CellType.SENSORY:
+                    continue
+                c.communication.z_social_move = np.clip(
+                    c.communication.z_social_move +
+                    np.array([dx_bias, dy_bias]) * scale * 0.25,
+                    -1.0, 1.0
+                )
 
     def _deliver_synaptic_events(self):
         for j in list(self.junctions.values()):
@@ -3288,8 +3417,8 @@ class Colony:
                             if jid in self.junctions and self.junctions[jid].kind == JunctionKind.SYNAPTIC)
             local_signals = self.world.sample_signals(c.x, c.y)
 
-            # Información posicional morfogenética: sesga diferenciación según
-            # la posición de la célula en el gradiente heredable del genoma.
+            # Morphogenetic positional information: biases differentiation according to
+            # the cell's position in the heritable gradient of the genome.
             morph_a, morph_b = self.world.sample_morphogens(c.x, c.y)
             morph_resp = c.genome.morphogen_response()   # (2, 4)
             # morph_bias[i]: BOUNDARY=0, NEURON=1, METABOLIC=2, REPAIR=3
@@ -3433,8 +3562,15 @@ class Colony:
         if len(positions) < seed_count:
             return
 
+        # Feature C: sexual recombination when there are >=2 germline cells.
+        # The second parent contributes genetic diversity without requiring fertilization.
+        if len(germline) >= 2:
+            second = sorted(germline, key=lambda c: c.identity.I)[-2]
+            base_genome = parent.genome.recombine(second.genome, parent.rng)
+        else:
+            base_genome = parent.genome
         child_genome = parent.reproduction.build_offspring_genome(
-            parent.genome, parent.neural, parent.memory, parent.rng
+            base_genome, parent.neural, parent.memory, parent.rng
         )
         if child_genome is None:
             parent._log("ORGANISM_REPRO_ABORTED:heredity")
@@ -3515,28 +3651,34 @@ class Colony:
 
 
 # ─────────────────────────────────────────────────────────────
-# MOTOR DE EVOLUCIÓN — selección por torneo entre colonias
+# EVOLUTION ENGINE — tournament selection between colonies
 # ─────────────────────────────────────────────────────────────
 
 class EvolutionEngine:
     """
-    Ejecuta N_COLONIES colonias aisladas en paralelo (round-robin secuencial).
-    Cada TOURNAMENT_INTERVAL ticks: clasifica colonias por fitness, mata la mitad
-    inferior y la reemplaza clonando genomas ganadores con mutación adicional.
+    Runs N_COLONIES isolated colonies in parallel (sequential round-robin).
+    Every TOURNAMENT_INTERVAL ticks: ranks colonies by fitness, kills the bottom
+    half and replaces them by cloning winning genomes with additional mutation.
 
-    Esto es selección por torneo multinivel: las células ya evolucionan dentro
-    de cada colonia; el motor añade selección entre colonias, haciendo que los
-    genomas más aptos dominen la población a lo largo de generaciones.
+    This is multilevel tournament selection: cells already evolve within
+    each colony; the engine adds between-colony selection, causing the most
+    fit genomes to dominate the population across generations.
     """
 
-    def __init__(self, n_colonies: int, tournament_interval: int, rng: random.Random):
+    def __init__(self, n_colonies: int, tournament_interval: int, rng: random.Random,
+                 perturbation_interval: int = 200, perturbation_strength: float = 3.0):
         self.n_colonies = n_colonies
         self.tournament_interval = tournament_interval
         self.rng = rng
+        self._perturbation_interval = perturbation_interval
+        self._perturbation_strength = perturbation_strength
         self.tick_count = 0
         self.evolution_history: List[Dict] = []
+        # Feature D: stress hypermutation
+        self._mean_fitness_history: List[float] = []
+        self._stress_hypermutation: bool = False
 
-        # Genoma primordial compartido; cada colonia arranca de una variante mutada
+        # Shared primordial genome; each colony starts from a mutated variant
         primordial = Genome.create(rng)
 
         self.worlds: List[SpatialWorld] = []
@@ -3551,7 +3693,9 @@ class EvolutionEngine:
             col_rng = random.Random(rng.randint(0, 2**31))
             world = SpatialWorld(
                 width=scale.world_width, height=scale.world_height,
-                n_sources=scale.n_sources, rng=col_rng, source_strength=8.0
+                n_sources=scale.n_sources, rng=col_rng, source_strength=8.0,
+                perturbation_interval=self._perturbation_interval,
+                perturbation_strength=self._perturbation_strength,
             )
             for _ in range(scale.prewarm_ticks):
                 world.tick()
@@ -3563,7 +3707,7 @@ class EvolutionEngine:
             self.colonies.append(colony)
             self.founding_genomes.append(founding)
 
-    # ── Fitness de una colonia ─────────────────────────────────
+    # ── Colony fitness ─────────────────────────────────────────
 
     def _colony_fitness(self, colony: Colony) -> float:
         alive = [c for c in colony.cells.values() if c.alive]
@@ -3587,14 +3731,14 @@ class EvolutionEngine:
         }.get(colony.organism.development_stage, 0.5)
         return float(mean_gen * mean_I * stage_mult * (0.65 + best_body + 0.25 * body_diversity))
 
-    # ── Torneo de selección ────────────────────────────────────
+    # ── Selection tournament ───────────────────────────────────
 
     def _reset_colony(self, idx: int, founding_genome: Genome):
-        """Destruye y recrea la colonia idx con el nuevo genoma fundador."""
+        """Destroys and recreates colony idx with the new founding genome."""
         old_colony = self.colonies[idx]
         old_world  = self.worlds[idx]
 
-        # Vaciar celulas y uniones
+        # Clear cells and junctions
         old_colony.cells.clear()
         old_colony.junctions.clear()
         old_colony._junction_pairs.clear()
@@ -3602,19 +3746,23 @@ class EvolutionEngine:
         old_colony.tick_count = 0
         old_colony.dead_log.clear()
 
-        # Reiniciar campos del mundo
+        # Reset world fields
         old_world.nutrients[:] = 0.0
         old_world.toxins[:]    = 0.0
         old_world.signals[:]   = 0.0
         old_world.occupied.clear()
         old_world.tick_count   = 0
-        # Re-sembrar fuentes y pre-calentar
+        # Re-seed sources and pre-warm
         for sx, sy in old_world.sources:
             old_world.nutrients[sy, sx] = 80.0
         scale = derive_simulation_scale(old_colony.max_cells)
         for _ in range(scale.prewarm_ticks):
             old_world.tick()
 
+        # Feature D: if stress hypermutation is active due to fitness collapse,
+        # reduce founding genome fidelity to broaden exploration.
+        if self._stress_hypermutation:
+            founding_genome.fidelity = max(0.30, founding_genome.fidelity * 0.55)
         self.founding_genomes[idx] = founding_genome
         old_colony.spawn_primordial_from_genome(scale.primordial_cells, founding_genome)
 
@@ -3625,7 +3773,22 @@ class EvolutionEngine:
         winners = ranked[:n_winners]
         losers  = ranked[n_winners:]
 
-        # Snapshot del mejor genoma para el registro histórico
+        # Feature D: stress-induced hypermutation at the population level.
+        # If mean fitness drops >=20% relative to the previous tournament, activate the flag.
+        # Replaced colonies receive a founding genome with reduced fidelity,
+        # broadening the solution space exploration (analogous to the SOS response).
+        current_mean = sum(fitnesses) / len(fitnesses) if fitnesses else 0.0
+        if len(self._mean_fitness_history) >= 1:
+            prev_mean = self._mean_fitness_history[-1]
+            if prev_mean > 1e-9 and current_mean < prev_mean * 0.80:
+                self._stress_hypermutation = True
+            else:
+                self._stress_hypermutation = False
+        self._mean_fitness_history.append(current_mean)
+        if len(self._mean_fitness_history) > 10:
+            self._mean_fitness_history.pop(0)
+
+        # Snapshot of the best genome for the historical record
         best_idx = winners[0]
         best_colony = self.colonies[best_idx]
         best_alive = [c for c in best_colony.cells.values() if c.alive]
@@ -3668,7 +3831,7 @@ class EvolutionEngine:
         if len(self.evolution_history) > 20:
             self.evolution_history.pop(0)
 
-    # ── Tick principal ─────────────────────────────────────────
+    # ── Main tick ─────────────────────────────────────────────
 
     def tick(self):
         for colony in self.colonies:
@@ -3680,7 +3843,7 @@ class EvolutionEngine:
         if self.tick_count % self.tournament_interval == 0:
             self._run_tournament()
 
-    # ── Estado para HTTP ───────────────────────────────────────
+    # ── HTTP state ────────────────────────────────────────────
 
     def best_colony_idx(self) -> int:
         return self._cached_best_idx
@@ -3716,10 +3879,10 @@ class EvolutionEngine:
 EVOLUTION_ENGINE: Optional["EvolutionEngine"] = None
 
 DASHBOARD_HTML = r"""<!DOCTYPE html>
-<html lang="es">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>nx-1 1.0 — CNDV</title>
+<title>nx-1 1.0 — LDNC</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { background: #060a0f; color: #c8d8e8; font-family: 'Courier New', monospace; font-size: 12px; }
@@ -3791,42 +3954,42 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 <div id="header">
   <div class="pulse"></div>
   <h1>nx-1</h1>
-  <div class="subtitle">CNDV — 9 bloques | B1-B9 | M1-M3 | H1-H4 | D1-D7</div>
+  <div class="subtitle">LDNC — 9 blocks | B1-B9 | M1-M3 | H1-H4 | D1-D7</div>
   <span id="tick-counter">tick 0</span>
   <div id="speed-control">
-    vel: <button onclick="setSpeed(50)">1×</button>
-         <button onclick="setSpeed(20)">2×</button>
-         <button onclick="setSpeed(5)">5×</button>
+    speed: <button onclick="setSpeed(50)">1×</button>
+           <button onclick="setSpeed(20)">2×</button>
+           <button onclick="setSpeed(5)">5×</button>
   </div>
 </div>
 <div id="main">
-  <!-- Panel izquierdo: Colonia -->
+  <!-- Left panel: Colony -->
   <div class="panel" id="left-panel">
-    <div class="section-title">Colonia</div>
+    <div class="section-title">Colony</div>
     <div id="colony-stats"></div>
-    <div class="section-title">Evolución — Torneo</div>
+    <div class="section-title">Evolution — Tournament</div>
     <div id="evo-stats"></div>
     <div id="evo-fitness-bars"></div>
-    <div class="section-title">Células vivas</div>
+    <div class="section-title">Living cells</div>
     <div id="cells-list"></div>
-    <div class="section-title">Muertes recientes</div>
+    <div class="section-title">Recent deaths</div>
     <div id="deaths-log"></div>
   </div>
 
-  <!-- Panel central: Mundo + gráfica -->
+  <!-- Center panel: World + chart -->
   <div id="world-panel">
     <canvas id="world-canvas" width="400" height="400"></canvas>
     <div style="width:400px; margin-top:8px;">
-      <div class="section-title">Identidad I — colonia</div>
+      <div class="section-title">Identity I — colony</div>
       <canvas id="identity-chart" width="400" height="80"></canvas>
     </div>
   </div>
 
-  <!-- Panel derecho: Célula seleccionada -->
+  <!-- Right panel: Selected cell -->
   <div class="panel" id="right-panel">
-    <div class="section-title">Célula seleccionada</div>
+    <div class="section-title">Selected cell</div>
     <div id="cell-detail">
-      <div style="color:#4a7090; padding: 20px 0; text-align:center;">Selecciona una célula</div>
+      <div style="color:#4a7090; padding: 20px 0; text-align:center;">Select a cell</div>
     </div>
   </div>
 </div>
@@ -3859,12 +4022,12 @@ function renderColonyStats(d) {
   const s = d;
   const org = s.organism || {};
   document.getElementById('colony-stats').innerHTML = `
-    <div class="colony-stat"><div class="val">${s.alive}</div><div class="lbl">vivas</div></div>
-    <div class="colony-stat"><div class="val">${(s.avg_identity_I*100).toFixed(0)}%</div><div class="lbl">I media</div></div>
+    <div class="colony-stat"><div class="val">${s.alive}</div><div class="lbl">alive</div></div>
+    <div class="colony-stat"><div class="val">${(s.avg_identity_I*100).toFixed(0)}%</div><div class="lbl">mean I</div></div>
     <div class="colony-stat"><div class="val">${s.junction_count||0}</div><div class="lbl">junctions</div></div>
-    <div class="colony-stat"><div class="val">${org.organism_count||0}</div><div class="lbl">organismos</div></div>
-    <div class="colony-stat"><div class="val">${((org.collective_identity||0)*100).toFixed(0)}%</div><div class="lbl">I cuerpo</div></div>
-    <div class="colony-stat"><div class="val">${((org.boundary_closure||0)*100).toFixed(0)}%</div><div class="lbl">frontera cuerpo</div></div>
+    <div class="colony-stat"><div class="val">${org.organism_count||0}</div><div class="lbl">organisms</div></div>
+    <div class="colony-stat"><div class="val">${((org.collective_identity||0)*100).toFixed(0)}%</div><div class="lbl">body I</div></div>
+    <div class="colony-stat"><div class="val">${((org.boundary_closure||0)*100).toFixed(0)}%</div><div class="lbl">body boundary</div></div>
     <div class="colony-stat"><div class="val">${s.tick}</div><div class="lbl">tick</div></div>
   `;
   document.getElementById('tick-counter').textContent = `tick ${s.tick}`;
@@ -3880,10 +4043,10 @@ function renderCells(cells) {
         <span class="gen-badge">G${c.generation}</span>
         <span style="color:#4a7090;float:right">t=${c.age}</span>
       </div>
-      <div style="color:#4a7090;font-size:10px">tipo: ${c.cell_type || 'n/a'} | org: ${c.multicellular?.organism_id || '-'}</div>
-      ${barRow('I identidad', 'bar-identity', S.I)}
+      <div style="color:#4a7090;font-size:10px">type: ${c.cell_type || 'n/a'} | org: ${c.multicellular?.organism_id || '-'}</div>
+      ${barRow('I identity', 'bar-identity', S.I)}
       ${barRow('ATP', 'bar-atp', S.A)}
-      ${barRow('Frontera', 'bar-boundary', S.C)}
+      ${barRow('Boundary', 'bar-boundary', S.C)}
     </div>`;
   }).join('');
 }
@@ -3910,11 +4073,11 @@ function renderCellDetail(c) {
   const pri = B3.priorities || {};
 
   const closureNodes = [
-    {lbl:'M→A', val: S.A, tip:'metabolismo→ATP'},
-    {lbl:'A→R', val: 1-(S.X||0), tip:'ATP→reparación'},
-    {lbl:'R→B1', val: S.C, tip:'rep→frontera'},
-    {lbl:'B1→M', val: S.C*(S.C||0), tip:'frontera→metabolismo'},
-    {lbl:'Cog→', val: B4.excitation||0, tip:'cogn→acción'}
+    {lbl:'M→A', val: S.A, tip:'metabolism→ATP'},
+    {lbl:'A→R', val: 1-(S.X||0), tip:'ATP→repair'},
+    {lbl:'R→B1', val: S.C, tip:'rep→boundary'},
+    {lbl:'B1→M', val: S.C*(S.C||0), tip:'boundary→metabolism'},
+    {lbl:'Cog→', val: B4.excitation||0, tip:'cogn→action'}
   ];
   const closureHtml = closureNodes.map(n => {
     const v = Math.max(0,Math.min(1,n.val||0));
@@ -3926,33 +4089,33 @@ function renderCellDetail(c) {
   document.getElementById('cell-detail').innerHTML = `
     <div style="margin-bottom:6px">
       <span class="cell-id">#${c.id}</span>${phaseTag(c.phase)}
-      <span class="gen-badge" style="margin-left:5px">Generación ${c.generation}</span>
-      <div style="color:#4a7090;font-size:10px">edad ${c.age} ticks | pos (${c.position.x},${c.position.y}) | org ${MC.organism_id || '-'}</div>
+      <span class="gen-badge" style="margin-left:5px">Generation ${c.generation}</span>
+      <div style="color:#4a7090;font-size:10px">age ${c.age} ticks | pos (${c.position.x},${c.position.y}) | org ${MC.organism_id || '-'}</div>
     </div>
 
-    <div class="section-title">B9 Identidad — I = ${((S.I||0)*100).toFixed(0)}%</div>
+    <div class="section-title">B9 Identity — I = ${((S.I||0)*100).toFixed(0)}%</div>
     ${barRow('I total', 'bar-identity', S.I)}
-    <div style="font-size:10px;color:#4a7090;margin:4px 0">Clausura organizacional:</div>
+    <div style="font-size:10px;color:#4a7090;margin:4px 0">Organizational closure:</div>
     <div class="closure-ring">${closureHtml}</div>
 
-    <div class="section-title">B1 Frontera</div>
-    ${barRow('integridad', 'bar-boundary', S.C)}
-    ${barRow('daño permanente', 'bar-damage', c.B1_boundary?.c_permanent_damage)}
+    <div class="section-title">B1 Boundary</div>
+    ${barRow('integrity', 'bar-boundary', S.C)}
+    ${barRow('permanent damage', 'bar-damage', c.B1_boundary?.c_permanent_damage)}
 
-    <div class="section-title">B2 Metabolismo</div>
+    <div class="section-title">B2 Metabolism</div>
     ${barRow('ATP', 'bar-atp', S.A)}
-    ${barRow('residuo W', 'bar-damage', S.W)}
-    ${barRow('eficiencia η', 'bar-neural', c.B2_metabolism?.eta_metabolic)}
+    ${barRow('waste W', 'bar-damage', S.W)}
+    ${barRow('efficiency η', 'bar-neural', c.B2_metabolism?.eta_metabolic)}
     <div class="stat-row"><span class="stat-label">masa_struct</span><span class="stat-value">${(S.M||0).toFixed(1)}</span></div>
     <div class="stat-row"><span class="stat-label">mat_reparativo</span><span class="stat-value">${(S.P||0).toFixed(1)}</span></div>
 
-    <div class="section-title">B3 Homeostasis (red regulatoria)</div>
-    <div style="font-size:10px;color:#4a7090;margin:2px 0">Prioridades ← W_reg @ errores:</div>
+    <div class="section-title">B3 Homeostasis (regulatory network)</div>
+    <div style="font-size:10px;color:#4a7090;margin:2px 0">Priorities ← W_reg @ errors:</div>
     <div class="priorities-bar">
-      <div class="pri-maint" style="width:${((pri.maintenance||0)*100).toFixed(0)}%" title="mantenimiento"></div>
-      <div class="pri-repair" style="width:${((pri.repair||0)*100).toFixed(0)}%" title="reparación"></div>
-      <div class="pri-action" style="width:${((pri.action||0)*100).toFixed(0)}%" title="acción"></div>
-      <div class="pri-repro" style="width:${((pri.reproduction||0)*100).toFixed(0)}%" title="reproducción"></div>
+      <div class="pri-maint" style="width:${((pri.maintenance||0)*100).toFixed(0)}%" title="maintenance"></div>
+      <div class="pri-repair" style="width:${((pri.repair||0)*100).toFixed(0)}%" title="repair"></div>
+      <div class="pri-action" style="width:${((pri.action||0)*100).toFixed(0)}%" title="action"></div>
+      <div class="pri-repro" style="width:${((pri.reproduction||0)*100).toFixed(0)}%" title="reproduction"></div>
     </div>
     <div style="display:flex;gap:8px;font-size:9px;margin:2px 0">
       <span style="color:#40c8ff">■ maint ${((pri.maintenance||0)*100).toFixed(0)}%</span>
@@ -3960,44 +4123,44 @@ function renderCellDetail(c) {
       <span style="color:#ffa040">■ act ${((pri.action||0)*100).toFixed(0)}%</span>
       <span style="color:#ff40ff">■ repr ${((pri.reproduction||0)*100).toFixed(0)}%</span>
     </div>
-    ${barRow('estrés sistémico', 'bar-stress', B3.stress)}
+    ${barRow('systemic stress', 'bar-stress', B3.stress)}
 
-    <div class="section-title">B4 Sustrato neuronal</div>
-    ${barRow('excitación', 'bar-neural', B4.excitation)}
-    ${barRow('integridad', 'bar-boundary', B4.integrity)}
-    ${barRow('error predictivo', 'bar-stress', B4.prediction_error)}
+    <div class="section-title">B4 Neural substrate</div>
+    ${barRow('excitation', 'bar-neural', B4.excitation)}
+    ${barRow('integrity', 'bar-boundary', B4.integrity)}
+    ${barRow('prediction error', 'bar-stress', B4.prediction_error)}
     <div class="stat-row"><span class="stat-label">action_bias</span>
       <span class="stat-value">[${(B4.action_bias||[0,0,0]).map(v=>v.toFixed(2)).join(', ')}]</span></div>
 
-    <div class="section-title">B5 Memoria material</div>
-    ${barRow('integridad', 'bar-mem', B5.h_integrity)}
-    ${barRow('tasa corrupción', 'bar-damage', (B5.corruption_rate||0)*20)}
+    <div class="section-title">B5 Material memory</div>
+    ${barRow('integrity', 'bar-mem', B5.h_integrity)}
+    ${barRow('corruption rate', 'bar-damage', (B5.corruption_rate||0)*20)}
     <div class="stat-row"><span class="stat-label">h_regulatory</span>
       <span class="stat-value">[${(B5.h_regulatory||[]).map(v=>v.toFixed(2)).join(',')}]</span></div>
 
-    <div class="section-title">B7 Reproducción</div>
-    ${barRow('madurez', 'bar-atp', B7.maturity)}
-    ${barRow('riesgo fallo', 'bar-damage', B7.failure_risk)}
-    <div class="stat-row"><span class="stat-label">replicando</span>
-      <span class="stat-value" style="color:${B7.replicating?'#ffa040':'#4a7090'}">${B7.replicating?'SÍ (etapa '+B7.d_stage+')':'no'}</span></div>
+    <div class="section-title">B7 Reproduction</div>
+    ${barRow('maturity', 'bar-atp', B7.maturity)}
+    ${barRow('failure risk', 'bar-damage', B7.failure_risk)}
+    <div class="stat-row"><span class="stat-label">replicating</span>
+      <span class="stat-value" style="color:${B7.replicating?'#ffa040':'#4a7090'}">${B7.replicating?'YES (stage '+B7.d_stage+')':'no'}</span></div>
 
-    <div class="section-title">B8 Comunicación biosemiótica</div>
-    ${barRow('carga señal', 'bar-neural', B8.signal_load || 0)}
-    ${barRow('coherencia', 'bar-mem', B8.coherence || 0)}
-    <div class="stat-row"><span class="stat-label">mov social</span>
+    <div class="section-title">B8 Biosemiotic communication</div>
+    ${barRow('signal load', 'bar-neural', B8.signal_load || 0)}
+    ${barRow('coherence', 'bar-mem', B8.coherence || 0)}
+    <div class="stat-row"><span class="stat-label">social move</span>
       <span class="stat-value">[${(B8.social_move||[0,0]).map(v=>v.toFixed(2)).join(', ')}]</span></div>
-    <div class="stat-row"><span class="stat-label">recibido</span>
-      <span class="stat-value">${Object.entries(B8.received||{}).filter(([k,v])=>v>0.02).map(([k,v])=>k+':'+v.toFixed(2)).join(' | ') || 'silencio'}</span></div>
+    <div class="stat-row"><span class="stat-label">received</span>
+      <span class="stat-value">${Object.entries(B8.received||{}).filter(([k,v])=>v>0.02).map(([k,v])=>k+':'+v.toFixed(2)).join(' | ') || 'silence'}</span></div>
 
-    <div class="section-title">Capa multicelular</div>
-    ${barRow('adhesión', 'bar-boundary', MC.attachment_strength || 0)}
+    <div class="section-title">Multicellular layer</div>
+    ${barRow('adhesion', 'bar-boundary', MC.attachment_strength || 0)}
     ${barRow('spike', 'bar-neural', MC.spike_output || 0)}
     ${barRow('cheater', 'bar-damage', MC.cheater_score || 0)}
     <div class="stat-row"><span class="stat-label">junctions</span><span class="stat-value">${MC.junction_count || 0}</span></div>
-    <div class="stat-row"><span class="stat-label">soporte</span>
+    <div class="stat-row"><span class="stat-label">support</span>
       <span class="stat-value">+${(MC.provided_support||0).toFixed(2)} / -${(MC.received_support||0).toFixed(2)}</span></div>
 
-    <div class="section-title">Eventos recientes</div>
+    <div class="section-title">Recent events</div>
     ${(c.events||[]).slice(-8).reverse().map(e => {
       const cls = e.includes('REPRO')||e.includes('OFFSPRING') ? 'repro' : e.includes('DEAD') ? 'death' : '';
       return `<div class="event ${cls}">${e}</div>`;
@@ -4122,7 +4285,7 @@ function selectCell(id) {
 
 function renderEvolution(evo) {
   if (!evo || evo.loading || !evo.n_colonies) {
-    document.getElementById('evo-stats').innerHTML = '<div style="color:#4a7090;padding:4px 0">inicializando…</div>';
+    document.getElementById('evo-stats').innerHTML = '<div style="color:#4a7090;padding:4px 0">initializing…</div>';
     document.getElementById('evo-fitness-bars').innerHTML = '';
     return;
   }
@@ -4131,10 +4294,10 @@ function renderEvolution(evo) {
   const maxFit    = Math.max(...fitnesses, 0.001);
   const meanFit   = fitnesses.reduce((a, b) => a + b, 0) / Math.max(1, fitnesses.length);
   document.getElementById('evo-stats').innerHTML = `
-    <div class="stat-row"><span class="stat-label">torneos</span><span class="stat-value">${evo.tournaments_run}</span></div>
-    <div class="stat-row"><span class="stat-label">colonias</span><span class="stat-value">${evo.n_colonies}</span></div>
-    <div class="stat-row"><span class="stat-label">mejor fit</span><span class="stat-value">${(fitnesses[best_idx]||0).toFixed(3)}</span></div>
-    <div class="stat-row"><span class="stat-label">media fit</span><span class="stat-value">${meanFit.toFixed(3)}</span></div>
+    <div class="stat-row"><span class="stat-label">tournaments</span><span class="stat-value">${evo.tournaments_run}</span></div>
+    <div class="stat-row"><span class="stat-label">colonies</span><span class="stat-value">${evo.n_colonies}</span></div>
+    <div class="stat-row"><span class="stat-label">best fit</span><span class="stat-value">${(fitnesses[best_idx]||0).toFixed(3)}</span></div>
+    <div class="stat-row"><span class="stat-label">mean fit</span><span class="stat-value">${meanFit.toFixed(3)}</span></div>
   `;
   document.getElementById('evo-fitness-bars').innerHTML = fitnesses.map((f, i) => {
     const pct   = (f / maxFit * 100).toFixed(1);
@@ -4174,7 +4337,7 @@ async function fetchAndRender() {
     if (identityHistory.length > 200) identityHistory.shift();
     drawIdentityChart(identityHistory);
 
-    // actualizar celula seleccionada si sigue viva
+    // update selected cell if still alive
     if (selectedId) {
       const c = (data.cells || []).find(c => c.id === selectedId);
       if (c) renderCellDetail(c);
@@ -4260,7 +4423,7 @@ def run_server(port: int = 8765):
 def main():
     global EVOLUTION_ENGINE, MAX_CELLS, N_COLONIES, TOURNAMENT_INTERVAL
 
-    ap = argparse.ArgumentParser(description="nx-1 1.0 — CNDV")
+    ap = argparse.ArgumentParser(description="nx-1 1.0 — LDNC")
     ap.add_argument("--max-cells",          type=int,   default=MAX_CELLS,
                     help=f"Total cell budget across all colonies (default {MAX_CELLS})")
     ap.add_argument("--n-colonies",         type=int,   default=N_COLONIES,
@@ -4271,6 +4434,10 @@ def main():
                     help="Dashboard HTTP port (default 8765)")
     ap.add_argument("--seed",               type=int,   default=42,
                     help="RNG seed (default 42)")
+    ap.add_argument("--perturbation-interval", type=int, default=200,
+                    help="Ticks between environmental perturbations (0=off, default 200)")
+    ap.add_argument("--perturbation-strength", type=float, default=3.0,
+                    help="Toxin pulse strength on perturbation (default 3.0)")
     args = ap.parse_args()
 
     MAX_CELLS           = args.max_cells
@@ -4278,33 +4445,35 @@ def main():
     TOURNAMENT_INTERVAL = args.tournament_interval
 
     print("=" * 60)
-    print("  nx-1 1.0 — CNDV + EvolutionEngine")
-    print("  B1-B9 | M1-M3 | H1-H4 | D1-D7 | Torneo multinivel")
-    print(f"  {N_COLONIES} colonias | torneo cada {TOURNAMENT_INTERVAL} ticks | max_cells={MAX_CELLS:,}")
+    print("  nx-1 1.0 — LDNC + EvolutionEngine")
+    print("  B1-B9 | M1-M3 | H1-H4 | D1-D7 | Multilevel tournament")
+    print(f"  {N_COLONIES} colonies | tournament every {TOURNAMENT_INTERVAL} ticks | max_cells={MAX_CELLS:,}")
     print("=" * 60)
 
     rng = random.Random(args.seed)
     np.random.seed(args.seed)
 
     server = run_server(args.port)
-    print(f"\n  Dashboard → http://localhost:{args.port}")
-    print(f"  Estado    → http://localhost:{args.port}/status")
-    print(f"  Mundo     → http://localhost:{args.port}/world")
-    print(f"  Evolución → http://localhost:{args.port}/evolution")
-    print(f"\n  Inicializando {N_COLONIES} colonias...")
+    print(f"\n  Dashboard  → http://localhost:{args.port}")
+    print(f"  Status     → http://localhost:{args.port}/status")
+    print(f"  World      → http://localhost:{args.port}/world")
+    print(f"  Evolution  → http://localhost:{args.port}/evolution")
+    print(f"\n  Initializing {N_COLONIES} colonies...")
 
     EVOLUTION_ENGINE = EvolutionEngine(
         n_colonies=N_COLONIES,
         tournament_interval=TOURNAMENT_INTERVAL,
         rng=rng,
+        perturbation_interval=args.perturbation_interval,
+        perturbation_strength=args.perturbation_strength,
     )
 
     per_colony_cells = max(4, MAX_CELLS // N_COLONIES)
     scale = derive_simulation_scale(per_colony_cells)
-    print(f"  Escala por colonia → max_cells={scale.max_cells:,} | "
-          f"mundo={scale.world_width}×{scale.world_height} | "
-          f"fuentes={scale.n_sources}")
-    print(f"\n  Iniciando simulación...\n")
+    print(f"  Scale per colony → max_cells={scale.max_cells:,} | "
+          f"world={scale.world_width}×{scale.world_height} | "
+          f"sources={scale.n_sources}")
+    print(f"\n  Starting simulation...\n")
 
     tick = 0
     try:
@@ -4326,13 +4495,13 @@ def main():
                     f"t={tick:6d} | best_col={best_idx} "
                     f"fit={fitnesses[best_idx]:.3f} "
                     f"mean_fit={sum(fitnesses)/len(fitnesses):.3f} "
-                    f"| vivas={alive:3d} I={avg_I:.2f} "
+                    f"| alive={alive:3d} I={avg_I:.2f} "
                     f"gen={max(gens) if gens else 0} "
                     f"stage={best_col.organism.development_stage} "
-                    f"| torneos={n_tournaments}"
+                    f"| tournaments={n_tournaments}"
                 )
 
-                # Reseed extintas inmediatamente (no esperar el torneo)
+                # Reseed extinct colonies immediately (do not wait for the tournament)
                 for i, col in enumerate(EVOLUTION_ENGINE.colonies):
                     if not any(c.alive for c in col.cells.values()):
                         fg = EVOLUTION_ENGINE.founding_genomes[i]
@@ -4342,11 +4511,11 @@ def main():
 
     except KeyboardInterrupt:
         n_t = len(EVOLUTION_ENGINE.evolution_history)
-        print(f"\n\n  Simulación detenida. Ticks={tick} | Torneos={n_t}")
+        print(f"\n\n  Simulation stopped. Ticks={tick} | Tournaments={n_t}")
         if EVOLUTION_ENGINE.evolution_history:
             last = EVOLUTION_ENGINE.evolution_history[-1]
-            print(f"  Último torneo: mejor_fitness={last['best_fitness']:.3f} "
-                  f"media={last['mean_fitness']:.3f}")
+            print(f"  Last tournament: best_fitness={last['best_fitness']:.3f} "
+                  f"mean={last['mean_fitness']:.3f}")
         server.shutdown()
 
 

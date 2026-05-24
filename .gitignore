@@ -219,6 +219,6 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-.coverage
+*coverage*
 htmlcov
 .DS_Store
