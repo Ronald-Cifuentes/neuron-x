@@ -10,6 +10,10 @@ This is not a toy cellular automaton. It is a compact research-grade prototype f
 ![Tests](https://img.shields.io/badge/tests-pytest-green)
 ![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen)
 ![Architecture](https://img.shields.io/badge/model-artificial%20life-purple)
+![Quality Gate](https://img.shields.io/badge/quality%20gate-passed-brightgreen)
+![Bugs](https://img.shields.io/badge/bugs-0-brightgreen)
+![Vulnerabilities](https://img.shields.io/badge/vulnerabilities-0-brightgreen)
+![Code Smells](https://img.shields.io/badge/code%20smells-0-brightgreen)
 
 ## Why It Exists
 
@@ -36,7 +40,7 @@ The simulation models that question through nine interacting biological abstract
 - **Integrated artificial-life architecture**: metabolism, cognition, repair, memory, reproduction, death, communication, multicellularity, and evolution all interact in one model.
 - **Emergent multicellularity**: cells form adhesion, metabolic, gap, and synaptic junctions; connected components are interpreted as organism candidates.
 - **Organism-level metrics**: collective identity, boundary closure, role coverage, metabolic exchange, neural coordination, shared stress, and reproduction pressure.
-- **Evolutionary selection layer**: multiple colonies compete in tournaments; weak colonies are reseeded from fitter lineages.
+- **Parallel evolutionary engine**: up to 16 colonies run concurrently as separate worker processes; tournament selection promotes fitter lineages and reseeds extinct ones.
 - **Dashboard included**: built-in HTTP dashboard visualizes cells, colonies, organisms, junctions, identity, fitness, and world state.
 - **Local API included**: `/status`, `/world`, and `/evolution` expose simulation state as JSON.
 - **Fully tested current surface**: pytest suite currently reports 100% line coverage.
@@ -63,7 +67,7 @@ The dashboard shows:
 - Cell phase, generation, type, identity, ATP, membrane, damage, neural excitation, memory, reproduction state, and communication state
 - Multicellular organism metrics
 - Junction network overlays
-- Tournament fitness across colonies
+- Tournament fitness across all colonies with per-colony fitness, alive count, and development stage grid
 - Nutrient and toxin fields
 
 ## Quick Start
@@ -101,6 +105,7 @@ python3 nx-1.py \
   --max-cells 10000 \
   --n-colonies 16 \
   --tournament-interval 2000 \
+  --speed accelerate=1000x \
   --port 8765 \
   --seed 42
 ```
@@ -110,8 +115,11 @@ python3 nx-1.py \
 | `--max-cells` | `10000` | Total cell budget across all colonies |
 | `--n-colonies` | `16` | Number of parallel colonies in the evolutionary engine |
 | `--tournament-interval` | `2000` | Ticks between selection events |
+| `--speed` | `real-time` | Simulation speed: `real-time`, `accelerate=Nx`, or `decelerate=Nx` (N up to 1000000) |
 | `--port` | `8765` | Local HTTP dashboard/API port |
 | `--seed` | `42` | Random seed for reproducible runs |
+| `--perturbation-interval` | `200` | Ticks between environmental toxin pulses (0 = off) |
+| `--perturbation-strength` | `3.0` | Toxin pulse intensity |
 
 ## Architecture
 
@@ -210,7 +218,7 @@ Development stages include:
 
 ### Evolution Operates Across Colonies
 
-The `EvolutionEngine` runs multiple colonies and periodically ranks them by fitness. Lower-performing colonies are reseeded using mutated genomes from stronger colonies. This creates selection pressure above the individual-cell level.
+The `EvolutionEngine` runs multiple colonies in parallel worker processes and periodically ranks them by fitness. Lower-performing colonies are reseeded using mutated genomes from stronger colonies. Extinct colonies are automatically reseeded from the best surviving lineage. Every 100 ticks the status log prints a per-colony grid showing fitness, alive count, and development stage for all colonies simultaneously, with `★` marking the current best.
 
 ## API
 
@@ -250,6 +258,26 @@ Returns evolutionary state:
 - Founder genome fidelity
 - Recent tournament history
 
+## Code Quality
+
+Static analysis via SonarQube — last scan: 2026-05-25.
+
+| Metric | Value |
+| --- | --- |
+| Quality Gate | ✅ Passed |
+| Bugs | 0 |
+| Vulnerabilities | 0 |
+| Code Smells | 0 |
+| Violations | 0 |
+| Coverage | 100% |
+| Duplicated Lines | 1.1% |
+| Technical Debt Ratio | 0.0% |
+| Reliability Rating | A |
+| Security Rating | A |
+| Maintainability Rating | A |
+| Lines of Code | 3,673 |
+| Security Hotspots | 1 (reviewed — HTTP localhost dashboard, marked Safe) |
+
 ## Testing
 
 Install test dependencies:
@@ -273,7 +301,7 @@ python3 -m pytest --cov=. --cov-report html -q
 Current verified result:
 
 ```text
-39 passed
+93 passed
 nx-1.py           100%
 tests/test_nx1.py 100%
 TOTAL              100%
@@ -325,11 +353,14 @@ Those are productization opportunities, not hidden facts.
 
 ```text
 .
-├── nx-1.py              # Simulation engine, dashboard, local API, CLI
+├── nx-1.py                    # Simulation engine, dashboard, local API, CLI
 ├── tests/
-│   └── test_nx1.py      # Pytest suite with full current line coverage
-├── htmlcov/              # Generated coverage report, ignored by git
-├── .coverage             # Generated coverage database, ignored by git
+│   └── test_nx1.py            # Pytest suite — 93 tests, 100% line coverage
+├── sonar-project.properties   # SonarQube scanner configuration
+├── .coveragerc                # Coverage configuration
+├── coverage.xml               # Coverage report consumed by SonarQube
+├── htmlcov/                   # Generated HTML coverage report, ignored by git
+├── .coverage                  # Generated coverage database, ignored by git
 └── .gitignore
 ```
 
