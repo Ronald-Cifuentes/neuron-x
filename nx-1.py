@@ -21,7 +21,7 @@ Degradation: D1-D7
 Inheritance: H1-H4
 """
 
-import argparse, math, random, time, json, threading, uuid, copy
+import argparse, math, random, time, json, threading, uuid, copy, base64, gzip, pickle, os, signal, io, sys
 import multiprocessing as mp
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple, Set
@@ -44,18 +44,89 @@ BASE_PRIMORDIAL_CELLS = 64
 BASE_PREWARM_TICKS = 90
 MIN_WORLD_SIDE = 12
 MAX_DENSE_WORLD_CELLS = 25_000_000
+DEFAULT_ENVIRONMENT = "friendly5"
 
 # ─────────────────────────────────────────────────────────────
 # EVOLUTIONARY ENGINE CONSTANTS
 # ─────────────────────────────────────────────────────────────
 N_COLONIES = 16
-TOURNAMENT_INTERVAL = 2000   # ticks between selection events
+TOURNAMENT_INTERVAL = 500    # ticks between selection events
 MIGRATION_INTERVAL: int = 500          # ticks between inter-colony emigration pulses
 GLOBAL_SIGNAL_LEAKAGE: float = 0.04   # fraction of cross-colony mean signal injected per tick
 EXCIT_THRESHOLD = 0.55       # spike threshold for discrete firing
 REFRACTORY_PERIOD = 4        # ticks of silence after a spike
 APPLICATION_JSON = 'application/json'
 NP_RNG = np.random.default_rng(0)
+_SHUTDOWN_REQUESTED = False
+WORKER_RECV_TIMEOUT_SECONDS = 300.0
+WORKER_RECV_HEARTBEAT_SECONDS = 5.0
+STATUS_HEARTBEAT_SECONDS = 5.0
+
+
+def request_shutdown(signum=None, frame=None) -> None:
+    global _SHUTDOWN_REQUESTED
+    _SHUTDOWN_REQUESTED = True
+
+
+def install_shutdown_signal_handlers() -> Dict:
+    if threading.current_thread() is not threading.main_thread():
+        return {}
+    handlers = {}
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        handlers[sig] = signal.getsignal(sig)
+        signal.signal(sig, request_shutdown)
+    return handlers
+
+
+def restore_shutdown_signal_handlers(handlers: Dict) -> None:
+    if threading.current_thread() is not threading.main_thread():
+        return
+    for sig, handler in handlers.items():
+        signal.signal(sig, handler)
+
+
+def recv_worker_message(conn, context: str, proc=None, timeout: float = WORKER_RECV_TIMEOUT_SECONDS):
+    if not hasattr(conn, "poll"):
+        return conn.recv()
+    start = time.monotonic()
+    while True:
+        if conn.poll(WORKER_RECV_HEARTBEAT_SECONDS):
+            return conn.recv()
+        elapsed = time.monotonic() - start
+        if proc is not None and hasattr(proc, "is_alive") and not proc.is_alive():
+            exitcode = getattr(proc, "exitcode", None)
+            raise RuntimeError(f"{context} worker exited before replying (exitcode={exitcode})")
+        print(f"  Waiting for {context}... {elapsed:.1f}s", flush=True)
+        if elapsed >= timeout:
+            raise TimeoutError(f"Timed out waiting for {context} after {elapsed:.1f}s")
+
+
+def worker_proc(owner, index: int):
+    procs = getattr(owner, "_procs", [])
+    return procs[index] if index < len(procs) else None
+
+
+def distribute_cell_budget(total_cells: int, requested_colonies: int) -> List[int]:
+    total_cells = int(total_cells)
+    requested_colonies = int(requested_colonies)
+    if total_cells < 1:
+        raise ValueError("max_cells must be >= 1")
+    if requested_colonies < 1:
+        raise ValueError("n_colonies must be >= 1")
+    active_colonies = min(requested_colonies, total_cells)
+    base = total_cells // active_colonies
+    remainder = total_cells % active_colonies
+    return [
+        base + (1 if i < remainder else 0)
+        for i in range(active_colonies)
+    ]
+
+
+def positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("must be >= 1")
+    return parsed
 
 # ── Speed control ──────────────────────────────────────────────────────────
 # Each label maps to the inter-tick sleep in seconds.
@@ -89,6 +160,53 @@ def speed_to_interval(speed: str) -> float:
 
 
 @dataclass(frozen=True)
+class EnvironmentProfile:
+    name: str
+    world_area_factor: float
+    source_density: float
+    raw_resource_per_cell_tick: float
+    nutrient_cap: float
+    initial_source_nutrient: float
+    background_nutrient: float
+    background_toxin: float
+    nutrient_retention: float
+    toxin_retention: float
+    perturbation_interval: int
+    perturbation_strength: float
+
+    @property
+    def source_strength(self) -> float:
+        denominator = max(1e-9, self.world_area_factor * self.source_density)
+        return self.raw_resource_per_cell_tick / denominator
+
+
+ENVIRONMENT_PROFILES: Dict[str, EnvironmentProfile] = {
+    "hostile5": EnvironmentProfile("hostile5", 1.00, 0.002, 0.05, 25.0, 5.0, 0.0, 35.0, 0.930, 0.990, 5, 40.0),
+    "hostile4": EnvironmentProfile("hostile4", 1.10, 0.004, 0.15, 35.0, 8.0, 0.0, 25.0, 0.950, 0.985, 10, 25.0),
+    "hostile3": EnvironmentProfile("hostile3", 1.20, 0.008, 0.35, 45.0, 12.0, 0.0, 15.0, 0.965, 0.980, 25, 15.0),
+    "hostile2": EnvironmentProfile("hostile2", 1.35, 0.014, 0.80, 60.0, 20.0, 0.0, 8.0, 0.975, 0.970, 60, 8.0),
+    "hostile1": EnvironmentProfile("hostile1", 1.60, 0.022, 1.60, 80.0, 40.0, 0.0, 3.0, 0.985, 0.960, 120, 4.0),
+    "sufficient": EnvironmentProfile("sufficient", 2.00, BASE_SOURCE_COUNT / BASE_MAX_CELLS, 3.20, 120.0, 80.0, 0.0, 0.0, 0.995, 0.950, 200, 3.0),
+    "friendly1": EnvironmentProfile("friendly1", 2.50, 0.040, 6.00, 180.0, 120.0, 5.0, 0.0, 0.997, 0.930, 0, 0.0),
+    "friendly2": EnvironmentProfile("friendly2", 3.00, 0.055, 10.00, 240.0, 160.0, 10.0, 0.0, 0.998, 0.910, 0, 0.0),
+    "friendly3": EnvironmentProfile("friendly3", 3.50, 0.070, 15.00, 320.0, 220.0, 18.0, 0.0, 0.999, 0.890, 0, 0.0),
+    "friendly4": EnvironmentProfile("friendly4", 4.00, 0.085, 22.00, 420.0, 300.0, 30.0, 0.0, 0.999, 0.870, 0, 0.0),
+    "friendly5": EnvironmentProfile("friendly5", 4.00, 0.100, 32.00, 520.0, 420.0, 50.0, 0.0, 0.999, 0.850, 0, 0.0),
+}
+
+
+def environment_profile(name: str) -> EnvironmentProfile:
+    key = str(name).lower().replace("-", "").replace("_", "").replace(" ", "")
+    if key == "survival":
+        key = "sufficient"
+    try:
+        return ENVIRONMENT_PROFILES[key]
+    except KeyError as exc:
+        valid = ", ".join(ENVIRONMENT_PROFILES)
+        raise ValueError(f"Unknown environment {name!r}. Valid environments: {valid}") from exc
+
+
+@dataclass(frozen=True)
 class SimulationScale:
     max_cells: int
     world_width: int
@@ -96,26 +214,39 @@ class SimulationScale:
     n_sources: int
     primordial_cells: int
     prewarm_ticks: int
+    source_strength: float
+    environment: str
+    world_area_factor: float
+    source_density: float
+    raw_resource_per_cell_tick: float
+    nutrient_cap: float
+    initial_source_nutrient: float
+    background_nutrient: float
+    background_toxin: float
+    nutrient_retention: float
+    toxin_retention: float
 
     @property
     def world_capacity(self) -> int:
         return self.world_width * self.world_height
 
 
-def derive_simulation_scale(max_cells: int) -> SimulationScale:
+def derive_simulation_scale(max_cells: int, environment: str = DEFAULT_ENVIRONMENT) -> SimulationScale:
     """
     Derives the spatial and trophic variables that depend on max_cells.
 
-    This simulation uses a dense world with one cell per coordinate. Therefore
-    the correct minimum world size is ceil(sqrt(max_cells))². For very large
-    values, the current dense architecture is no longer memory-executable; in
-    that case we fail early rather than lying with an impossible colony.
+    Space and resources are derived from an explicit environment profile.
+    "sufficient" preserves the old 2x area / 3.2 raw-resource-per-cell baseline.
+    "friendly5" is deliberately overprovisioned: 4x area, 10% source coverage,
+    32 raw resource injected per requested cell per tick, high nutrient caps,
+    background nutrients, and no perturbations.
     """
     max_cells = int(max_cells)
     if max_cells < 1:
         raise ValueError("MAX_CELLS must be >= 1")
 
-    side = max(MIN_WORLD_SIDE, math.ceil(math.sqrt(max_cells)))
+    profile = environment_profile(environment)
+    side = max(MIN_WORLD_SIDE, math.ceil(math.sqrt(max_cells * profile.world_area_factor)))
     capacity = side * side
     if capacity < max_cells:
         raise AssertionError("Derived spatial capacity does not cover MAX_CELLS")
@@ -126,8 +257,7 @@ def derive_simulation_scale(max_cells: int) -> SimulationScale:
             "cannot guarantee survival at that scale without changing the spatial model."
         )
 
-    source_ratio = BASE_SOURCE_COUNT / BASE_MAX_CELLS
-    n_sources = min(capacity, max(6, math.ceil(max_cells * source_ratio)))
+    n_sources = min(capacity, max(1, math.ceil(capacity * profile.source_density)))
     primordial_cells = max(1, min(max_cells, BASE_PRIMORDIAL_CELLS))
     prewarm_ticks = max(BASE_PREWARM_TICKS, side)
 
@@ -138,6 +268,17 @@ def derive_simulation_scale(max_cells: int) -> SimulationScale:
         n_sources=n_sources,
         primordial_cells=primordial_cells,
         prewarm_ticks=prewarm_ticks,
+        source_strength=profile.source_strength,
+        environment=profile.name,
+        world_area_factor=profile.world_area_factor,
+        source_density=profile.source_density,
+        raw_resource_per_cell_tick=profile.raw_resource_per_cell_tick,
+        nutrient_cap=profile.nutrient_cap,
+        initial_source_nutrient=profile.initial_source_nutrient,
+        background_nutrient=profile.background_nutrient,
+        background_toxin=profile.background_toxin,
+        nutrient_retention=profile.nutrient_retention,
+        toxin_retention=profile.toxin_retention,
     )
 
 # ─────────────────────────────────────────────────────────────
@@ -171,14 +312,32 @@ class SpatialWorld:
                  n_sources: int = 6, rng: random.Random = None,
                  source_strength: float = 3.5,
                  perturbation_interval: int = 0,
-                 perturbation_strength: float = 1.0):
+                 perturbation_strength: float = 1.0,
+                 nutrient_cap: float = 120.0,
+                 initial_source_nutrient: float = 80.0,
+                 background_nutrient: float = 0.0,
+                 background_toxin: float = 0.0,
+                 nutrient_retention: float = 0.995,
+                 toxin_retention: float = 0.950):
         self.W = width
         self.H = height
         self.rng = rng or random.Random()
         self.source_strength = source_strength
+        self.nutrient_cap = float(nutrient_cap)
+        self.toxin_cap = 60.0
+        self.nutrient_retention = float(nutrient_retention)
+        self.toxin_retention = float(toxin_retention)
         # grids
-        self.nutrients = np.zeros((height, width), dtype=np.float64)
-        self.toxins    = np.zeros((height, width), dtype=np.float64)
+        self.nutrients = np.full(
+            (height, width),
+            min(float(background_nutrient), self.nutrient_cap),
+            dtype=np.float64
+        )
+        self.toxins    = np.full(
+            (height, width),
+            min(float(background_toxin), self.toxin_cap),
+            dtype=np.float64
+        )
         # Intercellular communication fields: C × H × W.
         # Vectorized to keep cost low: O(channels × world), not O(cells²).
         self.signals   = np.zeros((N_SIGNAL_CHANNELS, height, width), dtype=np.float64)
@@ -194,9 +353,13 @@ class SpatialWorld:
         # fixed nutrient sources
         self.sources = [(self.rng.randint(2, width-3), self.rng.randint(2, height-3))
                         for _ in range(n_sources)]
+        self._refresh_source_arrays()
         # initial seed
-        for sx, sy in self.sources:
-            self.nutrients[sy, sx] = 80.0
+        if self.sources:
+            self.nutrients[self._source_y, self._source_x] = min(
+                self.nutrient_cap,
+                float(initial_source_nutrient)
+            )
         self.tick_count = 0
         # periodic environmental perturbation (Feature E)
         self.perturbation_interval = perturbation_interval
@@ -236,13 +399,13 @@ class SpatialWorld:
             self.signals[ch] *= decay
 
         # source emission
-        for sx, sy in self.sources:
-            self.nutrients[sy, sx] = min(120.0, self.nutrients[sy, sx] + self.source_strength)
+        if self.sources:
+            np.add.at(self.nutrients, (self._source_y, self._source_x), self.source_strength)
         # gentle evaporation
-        self.nutrients *= 0.995
-        self.toxins    *= 0.990
-        np.clip(self.nutrients, 0, 120, out=self.nutrients)
-        np.clip(self.toxins,    0,  60, out=self.toxins)
+        self.nutrients *= self.nutrient_retention
+        self.toxins    *= self.toxin_retention
+        np.clip(self.nutrients, 0, self.nutrient_cap, out=self.nutrients)
+        np.clip(self.toxins,    0, self.toxin_cap, out=self.toxins)
         np.clip(self.signals,   0, 100, out=self.signals)
 
         # Morphogenetic diffusion (slow, α=0.04) + re-imposition of boundary sources.
@@ -271,8 +434,13 @@ class SpatialWorld:
                 sx = (sx + self.rng.randint(-1, 1)) % self.W
                 sy = (sy + self.rng.randint(-1, 1)) % self.H
                 self.sources[idx] = (sx, sy)
+                self._refresh_source_arrays()
 
         self.tick_count += 1
+
+    def _refresh_source_arrays(self):
+        self._source_x = np.array([sx for sx, _ in self.sources], dtype=np.intp)
+        self._source_y = np.array([sy for _, sy in self.sources], dtype=np.intp)
 
     def sample(self, x: int, y: int) -> Tuple[float, float]:
         x = x % self.W; y = y % self.H
@@ -320,7 +488,7 @@ class SpatialWorld:
 
     def deposit_nutrient(self, x: int, y: int, amount: float):
         x = x % self.W; y = y % self.H
-        self.nutrients[y, x] = min(120.0, self.nutrients[y, x] + amount)
+        self.nutrients[y, x] = min(self.nutrient_cap, self.nutrients[y, x] + amount)
 
     def is_occupied(self, x: int, y: int) -> bool:
         return (x % self.W, y % self.H) in self.occupied
@@ -388,8 +556,90 @@ class SpatialWorld:
             "morphogen_b": self.morphogen_b.tolist(),
             "occupied":    [[k[0], k[1]] for k in self.occupied.keys()],
             "sources":     self.sources,
+            "nutrient_cap": self.nutrient_cap,
+            "source_strength": self.source_strength,
             "W": self.W, "H": self.H
         }
+
+    def dashboard_snapshot(self) -> Dict:
+        """Bounded world payload for the live dashboard.
+
+        The full world snapshot includes signal and morphogen matrices that the
+        dashboard does not render. Sending them through a worker pipe at large
+        colony sizes makes status refreshes dominate the simulation.
+        """
+        return {
+            "nutrients": self.nutrients.tolist(),
+            "toxins": self.toxins.tolist(),
+            "sources": self.sources,
+            "nutrient_cap": self.nutrient_cap,
+            "source_strength": self.source_strength,
+            "W": self.W,
+            "H": self.H,
+        }
+
+
+# ─────────────────────────────────────────────────────────────
+# LIVE SESSION PERSISTENCE
+# ─────────────────────────────────────────────────────────────
+
+SESSION_CODEC = "pickle+gzip+base64"
+
+
+def _encode_session_state(obj) -> str:
+    payload = pickle.dumps(obj, protocol=pickle.HIGHEST_PROTOCOL)
+    return base64.b64encode(gzip.compress(payload)).decode("ascii")
+
+
+def _decode_session_state(blob: str):
+    payload = gzip.decompress(base64.b64decode(blob.encode("ascii")))
+    return _SessionUnpickler(io.BytesIO(payload)).load()
+
+
+class _SessionUnpickler(pickle.Unpickler):
+    def find_class(self, module: str, name: str):
+        if module in ("__main__", "__mp_main__") and __name__ != "__main__":
+            current = sys.modules.get(__name__)
+            if current is not None and hasattr(current, name):
+                return getattr(current, name)
+        return super().find_class(module, name)
+
+
+def _live_session_id(now: Optional[float] = None) -> str:
+    return time.strftime("%Y%m%d_%H%M%S", time.localtime(now or time.time()))
+
+
+def _live_session_filename(session_id: str) -> str:
+    sid = session_id
+    if sid.startswith("live_"):
+        sid = sid[5:]
+    if sid.endswith(".json"):
+        sid = sid[:-5]
+    return f"live_{sid}.json"
+
+
+def resolve_live_session_path(session_id_or_path: str) -> str:
+    if os.path.exists(session_id_or_path):
+        return session_id_or_path
+    candidates = [
+        session_id_or_path,
+        f"{session_id_or_path}.json",
+        _live_session_filename(session_id_or_path),
+    ]
+    for candidate in candidates:
+        if os.path.exists(candidate):
+            return candidate
+    raise FileNotFoundError(f"Live session not found: {session_id_or_path}")
+
+
+def load_live_session(session_id_or_path: str) -> Dict:
+    path = resolve_live_session_path(session_id_or_path)
+    with open(path, "r", encoding="utf-8") as fh:
+        session = json.load(fh)
+    if session.get("codec") != SESSION_CODEC:
+        raise ValueError(f"Unsupported live-session codec: {session.get('codec')!r}")
+    session["_path"] = path
+    return session
 
 
 # ─────────────────────────────────────────────────────────────
@@ -501,12 +751,12 @@ class Genome:
     def create(rng: random.Random) -> "Genome":
         g = Genome()
         # H1
-        g.membrane_strength     = rng.uniform(0.6, 1.0)
-        g.transport_capacity    = rng.uniform(0.4, 0.9)
-        g.metabolic_base_rate   = rng.uniform(0.4, 0.8)
-        g.conversion_efficiency = rng.uniform(0.35, 0.70)
-        g.repair_capacity_base  = rng.uniform(0.3, 0.7)
-        g.waste_tolerance       = rng.uniform(0.2, 0.6)
+        g.membrane_strength     = rng.uniform(0.65, 1.0)
+        g.transport_capacity    = rng.uniform(0.5, 0.9)
+        g.metabolic_base_rate   = rng.uniform(0.65, 0.90)
+        g.conversion_efficiency = rng.uniform(0.55, 0.80)
+        g.repair_capacity_base  = rng.uniform(0.55, 0.80)
+        g.waste_tolerance       = rng.uniform(0.3, 0.6)
         # H2
         g.w_reg_flat = [rng.gauss(0.5, 0.4) for _ in range(20)]
         # H3
@@ -518,9 +768,9 @@ class Genome:
         # H4
         g.development_ticks       = rng.randint(8, 20)
         g.maturation_cost_rate    = rng.uniform(0.10, 0.22)
-        g.repr_min_age            = rng.randint(35, 75)
-        g.repr_threshold_energy   = rng.uniform(0.14, 0.30)
-        g.repr_threshold_damage   = rng.uniform(0.15, 0.40)
+        g.repr_min_age            = rng.randint(35, 55)
+        g.repr_threshold_energy   = rng.uniform(0.14, 0.22)
+        g.repr_threshold_damage   = rng.uniform(0.20, 0.45)
         g.fidelity                = rng.uniform(0.80, 0.98)
         g.motility                = rng.uniform(0.3, 0.9)
         g.chemotaxis_gain         = rng.uniform(0.4, 1.2)
@@ -550,12 +800,12 @@ class Genome:
             return [v + rng.gauss(0, sigma) if rng.random() > fid else v for v in lst]
 
         # H1
-        child.membrane_strength     = mf(child.membrane_strength,     0.1, 1.0)
-        child.transport_capacity    = mf(child.transport_capacity,     0.1, 1.0)
-        child.metabolic_base_rate   = mf(child.metabolic_base_rate,    0.1, 1.0)
-        child.conversion_efficiency = mf(child.conversion_efficiency,  0.1, 0.85)
-        child.repair_capacity_base  = mf(child.repair_capacity_base,   0.1, 1.0)
-        child.waste_tolerance       = mf(child.waste_tolerance,        0.1, 0.8)
+        child.membrane_strength     = mf(child.membrane_strength,     0.30, 1.0)
+        child.transport_capacity    = mf(child.transport_capacity,     0.1,  1.0)
+        child.metabolic_base_rate   = mf(child.metabolic_base_rate,    0.40, 1.0)
+        child.conversion_efficiency = mf(child.conversion_efficiency,  0.35, 0.85)
+        child.repair_capacity_base  = mf(child.repair_capacity_base,   0.30, 1.0)
+        child.waste_tolerance       = mf(child.waste_tolerance,        0.1,  0.8)
         # H2
         child.w_reg_flat = ml(child.w_reg_flat, 0.12)
         # H3
@@ -567,8 +817,8 @@ class Genome:
         # H4
         child.development_ticks     = max(5,  int(mf(child.development_ticks,     5,  30, 0.1)))
         child.maturation_cost_rate  = mf(child.maturation_cost_rate, 0.08, 0.30, 0.05)
-        child.repr_min_age          = max(20, int(mf(child.repr_min_age,          20, 120, 0.1)))
-        child.repr_threshold_energy = mf(child.repr_threshold_energy, 0.10, 0.55)
+        child.repr_min_age          = max(20, int(mf(child.repr_min_age,          20, 75,  0.1)))
+        child.repr_threshold_energy = mf(child.repr_threshold_energy, 0.10, 0.35)
         child.repr_threshold_damage = mf(child.repr_threshold_damage, 0.05, 0.6)
         child.fidelity              = mf(child.fidelity,              0.5, 0.999, 0.02)
         child.motility              = mf(child.motility,              0.1, 1.0)
@@ -783,7 +1033,7 @@ class Metabolism:
         self.p_repair = min(self.p_repair_cap, self.p_repair + repair_produced)
 
         # ── STAGE 5: surplus → reproductive material
-        if self.a_free > self.a_free_cap * 0.45:
+        if self.a_free > self.a_free_cap * 0.25:
             atp_for_repro = self.a_free * 0.06
             self.a_free -= atp_for_repro
             repro_produced = atp_for_repro * 0.65
@@ -2164,16 +2414,29 @@ class OrganismState:
             stack.extend(unseen_neighbors)
         return component
 
-    def _stable_id_for(self, comp: Set[str], used: Set[str]) -> str:
+    def _stable_id_for(self, comp: Set[str], used: Set[str],
+                       previous_owner_by_member: Optional[Dict[str, str]] = None) -> str:
         best_id = None
         best_overlap = 0
-        for oid, old_members in self._previous_members.items():
-            if oid in used:
-                continue
-            overlap = len(comp & old_members)
-            if overlap > best_overlap:
-                best_id = oid
-                best_overlap = overlap
+        overlaps: Dict[str, int] = {}
+        if previous_owner_by_member is None:
+            for oid, old_members in self._previous_members.items():
+                if oid in used:
+                    continue
+                overlap = len(comp & old_members)
+                if overlap > best_overlap:
+                    best_id = oid
+                    best_overlap = overlap
+        else:
+            for cid in comp:
+                oid = previous_owner_by_member.get(cid)
+                if oid is None or oid in used:
+                    continue
+                overlaps[oid] = overlaps.get(oid, 0) + 1
+            for oid, overlap in overlaps.items():
+                if overlap > best_overlap:
+                    best_id = oid
+                    best_overlap = overlap
         if best_id is not None and best_overlap / max(1, len(comp)) >= 0.25:
             used.add(best_id)
             return best_id
@@ -2339,8 +2602,16 @@ class OrganismState:
         alive_ids = {c.id for c in alive}
         components = self._connected_components(alive_ids, junctions)
         used_ids: Set[str] = set()
+        previous_owner_by_member = {
+            cid: oid
+            for oid, old_members in self._previous_members.items()
+            for cid in old_members
+        }
         organisms = [
-            self._compute_instance(self._stable_id_for(comp, used_ids), comp, cells, junctions)
+            self._compute_instance(
+                self._stable_id_for(comp, used_ids, previous_owner_by_member),
+                comp, cells, junctions
+            )
             for comp in components
         ]
         organisms.sort(key=lambda o: (o.evolutionary_score(), len(o.member_cell_ids)), reverse=True)
@@ -2563,9 +2834,11 @@ class Cell:
 
         # D2: Metabolic — already applied inside metabolism.step()
 
-        # D6: Ecological — local scarcity degrades gradually
-        if nut_local < 5.0:
-            self.damage_x = min(1.0, self.damage_x + 0.003)
+        # D6: Ecological — only near-zero scarcity inflicts structural damage;
+        # repair can compensate at moderate nutrient levels, allowing max_cells
+        # density without a hard ecological ceiling below the spatial cap.
+        if nut_local < 2.0:
+            self.damage_x = min(1.0, self.damage_x + 0.001)
 
         # D7: Organizational — if closure broken, diffuse damage is added
         if self.identity.i_causal_closure_proxy < 0.3:
@@ -3002,7 +3275,7 @@ class Colony:
         sources = self.world.sources
         placed = 0
         for attempt in range(200):
-            if placed >= n:
+            if placed >= n or len(self.cells) >= self.max_cells:
                 break
             # Spawn near nutrient sources
             if sources:
@@ -3020,8 +3293,8 @@ class Colony:
                 # More generous initial resources for primordial cells
                 cell.metabolism.r_raw  = 50.0
                 cell.metabolism.a_free = 60.0
-                self.cells[cell.id] = cell
-                placed += 1
+                if self.add_cell(cell):
+                    placed += 1
 
     def spawn_primordial_from_genome(self, n: int, genome: "Genome"):
         """
@@ -3031,7 +3304,7 @@ class Colony:
         sources = self.world.sources
         placed = 0
         for attempt in range(200):
-            if placed >= n:
+            if placed >= n or len(self.cells) >= self.max_cells:
                 break
             if sources:
                 sx, sy = sources[attempt % len(sources)]
@@ -3047,8 +3320,8 @@ class Colony:
                             rng=random.Random(self.rng.randint(0, 2**31)))
                 cell.metabolism.r_raw  = 50.0
                 cell.metabolism.a_free = 60.0
-                self.cells[cell.id] = cell
-                placed += 1
+                if self.add_cell(cell):
+                    placed += 1
 
     def tick(self, include_status: bool = True) -> Optional[Dict]:
         self.world.tick()
@@ -3079,15 +3352,28 @@ class Colony:
     def _tick_living_cells(self) -> Tuple[List[Cell], List[str]]:
         to_add: List[Cell] = []
         to_remove: List[str] = []
+        # Track net alive count to exclude cells that die this tick from the
+        # capacity check.  Using len(self.cells) would count dead cells (from
+        # emigration or the current tick) and wrongly block new offspring.
+        net_alive = sum(1 for c in self.cells.values() if c.alive)
         for cid, cell in self.cells.copy().items():
             if not cell.alive:
                 to_remove.append(cid)
                 continue
             offspring = cell.tick()
-            if offspring and len(self.cells) + len(to_add) < self.max_cells:
-                to_add.append(offspring)
             if not cell.alive:
                 to_remove.append(cid)
+                net_alive -= 1
+            if offspring:
+                if net_alive + len(to_add) < self.max_cells:
+                    to_add.append(offspring)
+                else:
+                    # Capacity exceeded: the offspring was already registered in
+                    # world.occupied inside Cell.__init__; unregister it now to
+                    # prevent a permanent ghost position that blocks future moves
+                    # and reproductions.
+                    offspring.alive = False
+                    offspring.world.unregister(offspring.x, offspring.y)
         return to_add, to_remove
 
     def _remove_dead_cells(self, to_remove: List[str]):
@@ -3838,7 +4124,7 @@ class Colony:
                 syn.receptor_type = "inhibitory"
                 syn.weight = -abs(syn.weight)
 
-    def status(self) -> Dict:
+    def status(self, cell_limit: Optional[int] = None) -> Dict:
         alive = [c for c in self.cells.values() if c.alive]
         phases = {}
         for c in alive:
@@ -3856,10 +4142,22 @@ class Colony:
 
         avg_identity = sum(c.identity.I for c in alive) / (len(alive) + 1e-9)
 
+        if cell_limit is None or len(alive) <= cell_limit:
+            visible_cells = alive
+        elif cell_limit <= 0:
+            visible_cells = []
+        else:
+            # Keep the dashboard payload bounded while still showing spatially
+            # distributed cells instead of only insertion-order ancestors.
+            step = max(1, len(alive) // cell_limit)
+            visible_cells = alive[::step][:cell_limit]
+
         return {
             "tick": self.tick_count,
             "alive": len(alive),
             "max": self.max_cells,
+            "cell_sample_count": len(visible_cells),
+            "cell_sample_limit": cell_limit,
             "phases": phases,
             "generations": gen_dist,
             "cell_types": type_dist,
@@ -3869,7 +4167,7 @@ class Colony:
             "junction_count": len(self.junctions),
             "junctions": [j.to_dict() for j in tuple(self.junctions.values())[:80]],
             "recent_deaths": self.dead_log[-5:],
-            "cells": [c.get_status() for c in alive]
+            "cells": [c.get_status() for c in visible_cells]
         }
 
 
@@ -3881,15 +4179,30 @@ class _ColonyWorker:
     """Owns one colony. Instantiated inside each worker process/thread."""
 
     def __init__(self, init_params: Dict) -> None:
+        if "session_worker_state" in init_params:
+            payload = _decode_session_state(init_params["session_worker_state"])
+            restored = payload["worker"]
+            self.__dict__.update(restored.__dict__)
+            if "np_rng_state" in payload:
+                NP_RNG.bit_generator.state = payload["np_rng_state"]
+            return
+
         col_rng = random.Random(init_params["col_rng_seed"])
         per_colony_cells = init_params["per_colony_cells"]
-        scale = derive_simulation_scale(per_colony_cells)
+        environment = init_params.get("environment", DEFAULT_ENVIRONMENT)
+        scale = derive_simulation_scale(per_colony_cells, environment=environment)
         self._scale = scale
         world = SpatialWorld(
             width=scale.world_width, height=scale.world_height,
-            n_sources=scale.n_sources, rng=col_rng, source_strength=8.0,
+            n_sources=scale.n_sources, rng=col_rng, source_strength=scale.source_strength,
             perturbation_interval=init_params["perturbation_interval"],
             perturbation_strength=init_params["perturbation_strength"],
+            nutrient_cap=scale.nutrient_cap,
+            initial_source_nutrient=scale.initial_source_nutrient,
+            background_nutrient=scale.background_nutrient,
+            background_toxin=scale.background_toxin,
+            nutrient_retention=scale.nutrient_retention,
+            toxin_retention=scale.toxin_retention,
         )
         for _ in range(scale.prewarm_ticks):
             world.tick()
@@ -3977,6 +4290,11 @@ class _ColonyWorker:
     def _compute_fitness(self, alive_cells: List) -> float:
         if not alive_cells:
             return 0.0
+        population_fraction = min(
+            1.0,
+            len(alive_cells) / max(1.0, float(self.colony.max_cells))
+        )
+        population_multiplier = 0.50 + 3.0 * population_fraction
         mean_gen = 1.0 + sum(c._generation for c in alive_cells) / len(alive_cells)
         mean_identity = sum(c.identity.I for c in alive_cells) / len(alive_cells)
         organism_scores = [o.evolutionary_score() for o in self.colony.organism.organisms]
@@ -3990,13 +4308,17 @@ class _ColonyWorker:
             "solitary": 0.45, "aggregate": 0.75, "proto_tissue": 1.25,
             "integrated": 1.8, "integrated_body": 2.3, "extinct": 0.0,
         }.get(self.colony.organism.development_stage, 0.5)
-        return float(mean_gen * mean_identity * stage_mult * (0.65 + best_body + 0.25 * body_diversity))
+        return float(
+            mean_gen * mean_identity * stage_mult *
+            (0.65 + best_body + 0.25 * body_diversity) *
+            population_multiplier
+        )
 
-    def get_status(self) -> Dict:
-        return self.colony.status()
+    def get_status(self, cell_limit: Optional[int] = None) -> Dict:
+        return self.colony.status(cell_limit=cell_limit)
 
     def get_world(self) -> Dict:
-        return self.colony.world.snapshot()
+        return self.colony.world.dashboard_snapshot()
 
     def get_best_genome(self) -> "Genome":
         alive = [c for c in self.colony.cells.values() if c.alive]
@@ -4028,9 +4350,17 @@ class _ColonyWorker:
     def reseed(self, genome: "Genome") -> None:
         self.colony.spawn_primordial_from_genome(3, genome)
 
+    def snapshot_state(self) -> str:
+        return _encode_session_state({
+            "worker": self,
+            "np_rng_state": NP_RNG.bit_generator.state,
+        })
+
 
 def _colony_worker_process(init_params: Dict, conn) -> None:
     """Entry point for each colony worker. Loops receiving commands until 'stop'."""
+    if threading.current_thread() is threading.main_thread():
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
     worker = _ColonyWorker(init_params)
     conn.send("ready")
     while True:
@@ -4045,7 +4375,8 @@ def _colony_worker_process(init_params: Dict, conn) -> None:
             worker.receive_immigrant(msg[1])
             conn.send(("immigration_done",))
         elif tag == "status":
-            conn.send(("status", worker.get_status()))
+            cell_limit = msg[1] if len(msg) > 1 else None
+            conn.send(("status", worker.get_status(cell_limit=cell_limit)))
         elif tag == "world":
             conn.send(("world", worker.get_world()))
         elif tag == "get_genome":
@@ -4056,6 +4387,8 @@ def _colony_worker_process(init_params: Dict, conn) -> None:
         elif tag == "reset":
             worker.reset(msg[1])
             conn.send(("reset_done",))
+        elif tag == "snapshot":
+            conn.send(("snapshot", worker.snapshot_state()))
         elif tag == "stop":
             break
 
@@ -4073,11 +4406,13 @@ class EvolutionEngine:
 
     def __init__(self, n_colonies: int, tournament_interval: int, rng: random.Random,
                  perturbation_interval: int = 200, perturbation_strength: float = 3.0,
-                 _worker_cls=None):
+                 environment: str = DEFAULT_ENVIRONMENT, _worker_cls=None):
         if _worker_cls is None:
             _worker_cls = mp.Process
         self._worker_cls = _worker_cls
-        self.n_colonies = n_colonies
+        self.environment = environment_profile(environment).name
+        self.per_colony_targets = distribute_cell_budget(MAX_CELLS, n_colonies)
+        self.n_colonies = len(self.per_colony_targets)
         self.tournament_interval = tournament_interval
         self.rng = rng
         self.tick_count = 0
@@ -4085,30 +4420,33 @@ class EvolutionEngine:
         self._mean_fitness_history: List[float] = []
         self._stress_hypermutation: bool = False
         self._cached_best_idx: int = 0
-        self._cached_fitnesses: List[float] = [0.0] * n_colonies
-        self._cached_extinct: List[bool] = [False] * n_colonies
-        self._cached_alive_counts: List[int] = [0] * n_colonies
-        self._cached_stages: List[str] = ["solitary"] * n_colonies
+        self._cached_fitnesses: List[float] = [0.0] * self.n_colonies
+        self._cached_extinct: List[bool] = [False] * self.n_colonies
+        self._cached_alive_counts: List[int] = [0] * self.n_colonies
+        self._cached_stages: List[str] = ["solitary"] * self.n_colonies
         self._cached_best_status: Dict = {}
         self._cached_best_world: Dict = {}
         self._global_signal: np.ndarray = np.zeros(N_SIGNAL_CHANNELS, dtype=np.float64)
         self._collective_pressure: float = 0.0
         self._migration_count: int = 0
+        self._rescue_cooldowns: List[int] = [0] * self.n_colonies  # tick when cooldown expires
+        self._target_reached_by_colony: List[bool] = [False] * self.n_colonies
         self.founding_genomes: List[Genome] = []
         self._conns: List = []
         self._procs: List = []
         self._worker_init_params: List[Dict] = []
 
         primordial = Genome.create(rng)
-        per_colony_cells = max(4, MAX_CELLS // n_colonies)
+        self.per_colony_cells = max(self.per_colony_targets)
 
-        for _ in range(n_colonies):
+        for colony_idx in range(self.n_colonies):
             founding = primordial.mutate(rng)
             col_rng_seed = rng.randint(0, 2**31)
             init_params = {
                 "founding_genome": founding,
                 "col_rng_seed": col_rng_seed,
-                "per_colony_cells": per_colony_cells,
+                "per_colony_cells": self.per_colony_targets[colony_idx],
+                "environment": self.environment,
                 "perturbation_interval": perturbation_interval,
                 "perturbation_strength": perturbation_strength,
             }
@@ -4123,23 +4461,63 @@ class EvolutionEngine:
             self._procs.append(proc)
             self._worker_init_params.append(init_params)
 
-        for conn in self._conns:
-            assert conn.recv() == "ready"
+        for i, conn in enumerate(self._conns):
+            assert recv_worker_message(conn, f"colony {i} startup", worker_proc(self, i)) == "ready"
 
         self._refresh_best_cache()
 
+    @classmethod
+    def from_session(cls, session: Dict, _worker_cls=None) -> "EvolutionEngine":
+        if _worker_cls is None:
+            _worker_cls = mp.Process
+        engine = cls.__new__(cls)
+        state = _decode_session_state(session["engine_state"])
+        engine.__dict__.update(state)
+        if not hasattr(engine, "per_colony_targets"):
+            target = int(getattr(engine, "per_colony_cells", max(1, MAX_CELLS // max(1, engine.n_colonies))))
+            engine.per_colony_targets = [target] * engine.n_colonies
+        if "np_rng_state" in session:
+            NP_RNG.bit_generator.state = session["np_rng_state"]
+        engine._worker_cls = _worker_cls
+        engine._conns = []
+        engine._procs = []
+        engine._worker_init_params = []
+        for worker_state in session["workers"]:
+            init_params = {"session_worker_state": worker_state}
+            parent_conn, child_conn = mp.Pipe(duplex=True)
+            proc = _worker_cls(target=_colony_worker_process,
+                               args=(init_params, child_conn), daemon=True)
+            proc.start()
+            if _worker_cls is not threading.Thread:
+                child_conn.close()
+            engine._conns.append(parent_conn)
+            engine._procs.append(proc)
+            engine._worker_init_params.append(init_params)
+        for i, conn in enumerate(engine._conns):
+            assert recv_worker_message(conn, f"colony {i} session startup", worker_proc(engine, i)) == "ready"
+        engine._refresh_best_cache()
+        return engine
+
     # ── Parallel tick ──────────────────────────────────────────
+
+    def _target_for_colony(self, index: int) -> int:
+        targets = getattr(self, "per_colony_targets", None)
+        if targets is not None and index < len(targets):
+            return int(targets[index])
+        return int(getattr(self, "per_colony_cells", max(1, MAX_CELLS // max(1, self.n_colonies))))
 
     def tick(self) -> None:
         for conn in self._conns:
             conn.send(("tick", self._global_signal))
         signal_summaries: List[np.ndarray] = []
         for i, conn in enumerate(self._conns):
-            msg = conn.recv()
+            msg = recv_worker_message(conn, f"colony {i} tick {self.tick_count + 1}", worker_proc(self, i))
             self._cached_fitnesses[i]    = msg[1]
             self._cached_extinct[i]      = msg[2]
             self._cached_alive_counts[i] = msg[3]
             self._cached_stages[i]       = msg[4]
+            if self._cached_alive_counts[i] >= self._target_for_colony(i):
+                self._target_reached_by_colony[i] = True
             if len(msg) > 5:
                 signal_summaries.append(msg[5])
         self.tick_count += 1
@@ -4147,19 +4525,78 @@ class EvolutionEngine:
         if signal_summaries:
             self._global_signal = np.mean(signal_summaries, axis=0)
         self._apply_collective_pressure()
+        self._rescue_dying_colonies()
         if self.tick_count % MIGRATION_INTERVAL == 0:
             self._run_migration()
-        if self.tick_count % self.tournament_interval == 0:
+        if (self.tick_count % self.tournament_interval == 0 and
+                self._population_target_reached()):
             self._run_tournament()
+
+    def _population_target_reached(self) -> bool:
+        counts = list(getattr(self, "_cached_alive_counts", []))
+        return bool(counts) and all(
+            count >= self._target_for_colony(i)
+            for i, count in enumerate(counts)
+        )
+
+    def _population_target_reached_once_by_all_colonies(self) -> bool:
+        reached = list(getattr(self, "_target_reached_by_colony", []))
+        return bool(reached) and all(reached)
+
+    # ── Rescue ─────────────────────────────────────────────────
+
+    def _rescue_dying_colonies(self) -> None:
+        """Fully reset any colony that is far behind the leader and not in cooldown.
+
+        Cooldown prevents the rescue-reset loop: a freshly reset colony starts at
+        primordial size and would immediately qualify for another rescue without it.
+        The cooldown gives the colony time to grow before it can be rescued again.
+        Only activates once every colony has reached the per-colony cell
+        budget at least once, so viable laggards are not reset during ramp-up.
+        """
+        if not self._population_target_reached_once_by_all_colonies():
+            return
+        best_alive = max(self._cached_alive_counts)
+        rescue_thresholds = [
+            min(self._target_for_colony(i), max(1, max(64, best_alive // 20)))
+            for i in range(self.n_colonies)
+        ]
+        best_idx = int(np.argmax(self._cached_alive_counts))
+        victims = [
+            i for i in range(self.n_colonies)
+            if (self._cached_alive_counts[i] < rescue_thresholds[i]
+                and i != best_idx
+                and self.tick_count >= self._rescue_cooldowns[i])
+        ]
+        if not victims:
+            return
+        self._conns[best_idx].send(("get_genome",))
+        _, donor_genome = recv_worker_message(
+            self._conns[best_idx], f"colony {best_idx} rescue genome", worker_proc(self, best_idx)
+        )
+        cooldown_ticks = max(300, self.tournament_interval)
+        for i in victims:
+            new_genome = donor_genome.mutate(self.rng)
+            self.founding_genomes[i] = new_genome
+            self._rescue_cooldowns[i] = self.tick_count + cooldown_ticks
+            self._conns[i].send(("reset", new_genome))
+        for i in victims:
+            recv_worker_message(self._conns[i], f"colony {i} rescue reset", worker_proc(self, i))
 
     # ── Tournament ─────────────────────────────────────────────
 
     def _run_tournament(self) -> None:
+        if self.n_colonies < 2:
+            return
         fitnesses = list(self._cached_fitnesses)
         ranked = sorted(range(self.n_colonies), key=lambda i: fitnesses[i], reverse=True)
         n_winners = self.n_colonies // 2
         winners = ranked[:n_winners]
-        losers  = ranked[n_winners:]
+        ranked_losers = ranked[n_winners:]
+        losers = [
+            li for li in ranked_losers
+            if self._cached_alive_counts[li] < self._target_for_colony(li)
+        ]
 
         current_mean = sum(fitnesses) / len(fitnesses) if fitnesses else 0.0
         if len(self._mean_fitness_history) >= 1:
@@ -4175,12 +4612,17 @@ class EvolutionEngine:
         best_idx = winners[0]
 
         # Request genomes from all needed winners simultaneously
-        needed_winners = sorted({winners[rank % len(winners)] for rank in range(len(losers))})
+        needed_winners = sorted(
+            {best_idx} |
+            {winners[rank % len(winners)] for rank in range(len(losers))}
+        )
         for wi in needed_winners:
             self._conns[wi].send(("get_genome",))
         winner_genomes: Dict[int, Genome] = {}
         for wi in needed_winners:
-            _, genome = self._conns[wi].recv()
+            _, genome = recv_worker_message(
+                self._conns[wi], f"colony {wi} tournament genome", worker_proc(self, wi)
+            )
             winner_genomes[wi] = genome
 
         best_genome_obj = winner_genomes.get(best_idx)
@@ -4195,8 +4637,10 @@ class EvolutionEngine:
             }
 
         # Get best colony status for organisms snapshot in history
-        self._conns[best_idx].send(("status",))
-        _, best_status = self._conns[best_idx].recv()
+        self._conns[best_idx].send(("status", 0))
+        _, best_status = recv_worker_message(
+            self._conns[best_idx], f"colony {best_idx} tournament status", worker_proc(self, best_idx)
+        )
 
         # Send resets to all losers
         for rank, li in enumerate(losers):
@@ -4209,7 +4653,7 @@ class EvolutionEngine:
             self._conns[li].send(("reset", new_genome))
 
         for li in losers:
-            self._conns[li].recv()  # ("reset_done",)
+            recv_worker_message(self._conns[li], f"colony {li} tournament reset", worker_proc(self, li))
 
         self.evolution_history.append({
             "tournament":    len(self.evolution_history) + 1,
@@ -4217,6 +4661,7 @@ class EvolutionEngine:
             "fitnesses":     [float(round(f, 4)) for f in fitnesses],
             "winner_indices": winners,
             "loser_indices":  losers,
+            "ranked_loser_indices": ranked_losers,
             "best_fitness":  float(round(fitnesses[best_idx], 4)),
             "mean_fitness":  float(round(current_mean, 4)),
             "best_genome":   best_genome_snap,
@@ -4250,7 +4695,9 @@ class EvolutionEngine:
             self._conns[src].send(("get_emigrants", 1))
         emigrants_by_source: Dict[int, List[Dict]] = {}
         for src in sources:
-            _, emigrant_list = self._conns[src].recv()
+            _, emigrant_list = recv_worker_message(
+                self._conns[src], f"colony {src} migration emigrants", worker_proc(self, src)
+            )
             emigrants_by_source[src] = emigrant_list
         sent_targets: List[int] = []
         for rank, src in enumerate(sources):
@@ -4260,7 +4707,7 @@ class EvolutionEngine:
             self._conns[tgt].send(("receive_immigrant", emigrants_by_source[src][0]))
             sent_targets.append(tgt)
         for tgt in sent_targets:
-            self._conns[tgt].recv()
+            recv_worker_message(self._conns[tgt], f"colony {tgt} migration receive", worker_proc(self, tgt))
             self._migration_count += 1
 
     # ── Cache / HTTP helpers ───────────────────────────────────
@@ -4268,10 +4715,14 @@ class EvolutionEngine:
     def _refresh_best_cache(self) -> None:
         """Fetch status and world snapshot from the best worker. Main thread only."""
         best = self._cached_best_idx
-        self._conns[best].send(("status",))
-        _, self._cached_best_status = self._conns[best].recv()
+        self._conns[best].send(("status", 1000))
+        _, self._cached_best_status = recv_worker_message(
+            self._conns[best], f"colony {best} status refresh", worker_proc(self, best)
+        )
         self._conns[best].send(("world",))
-        _, self._cached_best_world = self._conns[best].recv()
+        _, self._cached_best_world = recv_worker_message(
+            self._conns[best], f"colony {best} world refresh", worker_proc(self, best)
+        )
 
     def best_colony_idx(self) -> int:
         return self._cached_best_idx
@@ -4291,7 +4742,7 @@ class EvolutionEngine:
         for i in extinct_indices:
             self._conns[i].send(("reseed", self.founding_genomes[i]))
         for i in extinct_indices:
-            self._conns[i].recv()  # ("reseeded",)
+            recv_worker_message(self._conns[i], f"colony {i} reseed", worker_proc(self, i))
 
     def shutdown(self) -> None:
         for conn in self._conns:
@@ -4299,12 +4750,75 @@ class EvolutionEngine:
         for proc in self._procs:
             proc.join(timeout=2.0)
 
+    def _engine_session_state(self) -> Dict:
+        fields = (
+            "environment", "n_colonies", "tournament_interval",
+            "rng", "tick_count", "evolution_history", "_mean_fitness_history",
+            "_stress_hypermutation", "_cached_best_idx", "_cached_fitnesses",
+            "_cached_extinct", "_cached_alive_counts", "_cached_stages",
+            "_cached_best_status", "_cached_best_world", "_global_signal",
+            "_collective_pressure", "_migration_count", "_rescue_cooldowns",
+            "_target_reached_by_colony", "founding_genomes", "per_colony_cells",
+            "per_colony_targets",
+        )
+        return {name: getattr(self, name) for name in fields if hasattr(self, name)}
+
+    def save_session(self, directory: str = ".") -> str:
+        session_id = _live_session_id()
+        path = os.path.join(directory, _live_session_filename(session_id))
+        suffix = 1
+        while os.path.exists(path):
+            path = os.path.join(directory, _live_session_filename(f"{session_id}_{suffix}"))
+            suffix += 1
+
+        for conn in self._conns:
+            conn.send(("snapshot",))
+        worker_states = []
+        for i, conn in enumerate(self._conns):
+            tag, payload = recv_worker_message(conn, f"colony {i} session snapshot", worker_proc(self, i))
+            if tag != "snapshot":
+                raise RuntimeError(f"Unexpected snapshot response: {tag!r}")
+            worker_states.append(payload)
+
+        session = {
+            "session_id": session_id,
+            "created_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
+            "codec": SESSION_CODEC,
+            "program": "nx-1.py",
+            "max_cells": MAX_CELLS,
+            "n_colonies": self.n_colonies,
+            "per_colony_cells": self.per_colony_cells,
+            "per_colony_targets": list(getattr(self, "per_colony_targets", [])),
+            "environment": self.environment,
+            "tournament_interval": self.tournament_interval,
+            "tick": self.tick_count,
+            "summary": self.status(),
+            "np_rng_state": NP_RNG.bit_generator.state,
+            "engine_state": _encode_session_state(self._engine_session_state()),
+            "workers": worker_states,
+        }
+        tmp_path = f"{path}.tmp"
+        with open(tmp_path, "w", encoding="utf-8") as fh:
+            json.dump(session, fh, separators=(",", ":"))
+        os.replace(tmp_path, path)
+        return path
+
     def status(self) -> Dict:
+        targets = [self._target_for_colony(i) for i in range(self.n_colonies)]
         return {
             "tick":                     self.tick_count,
             "n_colonies":               self.n_colonies,
+            "environment":              self.environment,
             "tournament_interval":      self.tournament_interval,
             "tournaments_run":          len(self.evolution_history),
+            "per_colony_target":        self.per_colony_cells,
+            "per_colony_targets":       targets,
+            "total_cell_budget":        sum(targets),
+            "colonies_at_target":       sum(
+                1 for i, n in enumerate(self._cached_alive_counts)
+                if n >= self._target_for_colony(i)
+            ),
+            "all_colonies_at_target":   self._population_target_reached(),
             "colony_fitnesses":         [float(round(f, 4)) for f in self._cached_fitnesses],
             "best_colony_idx":          self._cached_best_idx,
             "colony_sizes":             list(self._cached_alive_counts),
@@ -4857,12 +5371,12 @@ def run_server(port: int = 8765):
     return server
 
 def main():
-    global EVOLUTION_ENGINE, MAX_CELLS, N_COLONIES, TOURNAMENT_INTERVAL, NP_RNG
+    global EVOLUTION_ENGINE, MAX_CELLS, N_COLONIES, TOURNAMENT_INTERVAL, NP_RNG, _SHUTDOWN_REQUESTED
 
     ap = argparse.ArgumentParser(description="nx-1 1.0 — LDNC")
-    ap.add_argument("--max-cells",          type=int,   default=MAX_CELLS,
+    ap.add_argument("--max-cells",          type=positive_int,   default=MAX_CELLS,
                     help=f"Total cell budget across all colonies (default {MAX_CELLS})")
-    ap.add_argument("--n-colonies",         type=int,   default=N_COLONIES,
+    ap.add_argument("--n-colonies",         type=positive_int,   default=N_COLONIES,
                     help=f"Number of parallel colonies (default {N_COLONIES})")
     ap.add_argument("--tournament-interval",type=int,   default=TOURNAMENT_INTERVAL,
                     help=f"Ticks between selection events (default {TOURNAMENT_INTERVAL})")
@@ -4870,75 +5384,156 @@ def main():
                     help="Dashboard HTTP port (default 8765)")
     ap.add_argument("--seed",               type=int,   default=42,
                     help="RNG seed (default 42)")
-    ap.add_argument("--perturbation-interval", type=int, default=200,
-                    help="Ticks between environmental perturbations (0=off, default 200)")
-    ap.add_argument("--perturbation-strength", type=float, default=3.0,
-                    help="Toxin pulse strength on perturbation (default 3.0)")
+    ap.add_argument("--environment", type=str,
+                    choices=list(ENVIRONMENT_PROFILES.keys()),
+                    default=DEFAULT_ENVIRONMENT,
+                    help=f"Environment profile (default {DEFAULT_ENVIRONMENT})")
+    ap.add_argument("--perturbation-interval", type=int, default=None,
+                    help="Ticks between environmental perturbations (0=off; default from environment)")
+    ap.add_argument("--perturbation-strength", type=float, default=None,
+                    help="Toxin pulse strength on perturbation (default from environment)")
     ap.add_argument("--speed", type=str,
                     choices=list(SPEED_INTERVALS.keys()),
                     default="real-time",
                     help="Simulation speed relative to wall clock (default: real-time = 1 tick/s)")
+    ap.add_argument("--load-session", type=str, default=None,
+                    help="Load a live_YYYYMMDD_HHMMSS.json session by id, filename, or path")
+    ap.add_argument("--no-save-session", action="store_true",
+                    help="Do not write a live_YYYYMMDD_HHMMSS.json checkpoint on Ctrl+C")
     args = ap.parse_args()
 
-    MAX_CELLS           = args.max_cells
-    N_COLONIES          = args.n_colonies
-    TOURNAMENT_INTERVAL = args.tournament_interval
+    session = load_live_session(args.load_session) if args.load_session else None
+    if session is not None:
+        MAX_CELLS = int(session["max_cells"])
+        N_COLONIES = int(session["n_colonies"])
+        TOURNAMENT_INTERVAL = int(session["tournament_interval"])
+    else:
+        MAX_CELLS = args.max_cells
+        N_COLONIES = args.n_colonies
+        TOURNAMENT_INTERVAL = args.tournament_interval
 
     print("=" * 60)
     print("  nx-1 1.0 — LDNC + EvolutionEngine")
     print("  B1-B9 | M1-M3 | H1-H4 | D1-D7 | Multilevel tournament")
-    print(f"  {N_COLONIES} colonies | tournament every {TOURNAMENT_INTERVAL} ticks | max_cells={MAX_CELLS:,}")
+    planned_active_colonies = N_COLONIES if session is not None else min(N_COLONIES, MAX_CELLS)
+    print(f"  {planned_active_colonies} active colonies"
+          f"{f' requested from {N_COLONIES}' if planned_active_colonies != N_COLONIES else ''}"
+          f" | tournament every {TOURNAMENT_INTERVAL} ticks | max_cells={MAX_CELLS:,}")
     print("=" * 60)
 
     rng = random.Random(args.seed)
     NP_RNG = np.random.default_rng(args.seed)
+    profile = environment_profile(session["environment"] if session is not None else args.environment)
+    perturbation_interval = (
+        profile.perturbation_interval
+        if args.perturbation_interval is None else args.perturbation_interval
+    )
+    perturbation_strength = (
+        profile.perturbation_strength
+        if args.perturbation_strength is None else args.perturbation_strength
+    )
 
     server = run_server(args.port)
     print(f"\n  Dashboard  → http://localhost:{args.port}")
     print(f"  Status     → http://localhost:{args.port}/status")
     print(f"  World      → http://localhost:{args.port}/world")
     print(f"  Evolution  → http://localhost:{args.port}/evolution")
-    print(f"\n  Initializing {N_COLONIES} colonies...")
+    if session is not None:
+        print(f"\n  Loading live session {session['session_id']} from {session['_path']}...")
+        EVOLUTION_ENGINE = EvolutionEngine.from_session(session)
+    else:
+        print(f"\n  Initializing {planned_active_colonies} active colonies"
+              f"{f' from {N_COLONIES} requested' if planned_active_colonies != N_COLONIES else ''}...")
+        EVOLUTION_ENGINE = EvolutionEngine(
+            n_colonies=N_COLONIES,
+            tournament_interval=TOURNAMENT_INTERVAL,
+            rng=rng,
+            environment=profile.name,
+            perturbation_interval=perturbation_interval,
+            perturbation_strength=perturbation_strength,
+        )
 
-    EVOLUTION_ENGINE = EvolutionEngine(
-        n_colonies=N_COLONIES,
-        tournament_interval=TOURNAMENT_INTERVAL,
-        rng=rng,
-        perturbation_interval=args.perturbation_interval,
-        perturbation_strength=args.perturbation_strength,
-    )
-
-    per_colony_cells = max(4, MAX_CELLS // N_COLONIES)
-    scale = derive_simulation_scale(per_colony_cells)
-    print(f"  Scale per colony → max_cells={scale.max_cells:,} | "
+    per_colony_cells = getattr(EVOLUTION_ENGINE, "per_colony_cells", max(1, MAX_CELLS // max(1, N_COLONIES)))
+    targets = getattr(EVOLUTION_ENGINE, "per_colony_targets", [per_colony_cells] * getattr(EVOLUTION_ENGINE, "n_colonies", N_COLONIES))
+    scale = derive_simulation_scale(per_colony_cells, environment=profile.name)
+    print(f"  Active colonies → {getattr(EVOLUTION_ENGINE, 'n_colonies', N_COLONIES)} | "
+          f"cell_budget={sum(targets):,} | per_colony_targets={targets[:8]}{'...' if len(targets) > 8 else ''}")
+    print(f"  Scale largest colony → max_cells={scale.max_cells:,} | "
           f"world={scale.world_width}×{scale.world_height} | "
           f"sources={scale.n_sources}")
+    print(f"  Environment → {scale.environment} | raw_resource/cell/tick={scale.raw_resource_per_cell_tick:.1f} | "
+          f"source_strength={scale.source_strength:.1f} | nutrient_cap={scale.nutrient_cap:.0f} | "
+          f"perturbation={perturbation_interval}:{perturbation_strength}")
+    if session is not None:
+        print(f"  Restored tick → {EVOLUTION_ENGINE.tick_count}")
     print("\n  Starting simulation...\n")
 
-    run_simulation_loop(server, tick_interval=speed_to_interval(args.speed))
+    _SHUTDOWN_REQUESTED = False
+    signal_handlers = install_shutdown_signal_handlers()
+    try:
+        run_simulation_loop(
+            server,
+            tick_interval=speed_to_interval(args.speed),
+            save_on_exit=not args.no_save_session,
+        )
+    finally:
+        restore_shutdown_signal_handlers(signal_handlers)
 
 
-def run_simulation_loop(server, tick_interval: float = 1.0):
+def run_simulation_loop(server, tick_interval: float = 1.0, save_on_exit: bool = True):
+    global _SHUTDOWN_REQUESTED
     tick = 0
     window_start = time.monotonic()
+    last_status_at = window_start
+    last_status_tick = 0
     try:
         while True:
+            if _SHUTDOWN_REQUESTED:
+                break
             t_start = time.monotonic()
             EVOLUTION_ENGINE.tick()
             tick += 1
-            if tick % 100 == 0:
-                window_elapsed = time.monotonic() - window_start
-                tps = 100.0 / max(window_elapsed, 1e-9)
+            if _SHUTDOWN_REQUESTED:
+                break
+            now = time.monotonic()
+            if tick % 100 == 0 or now - last_status_at >= STATUS_HEARTBEAT_SECONDS:
+                window_elapsed = now - window_start
+                tps = (tick - last_status_tick) / max(window_elapsed, 1e-9)
                 EVOLUTION_ENGINE._refresh_best_cache()
                 print_periodic_status(tick, tps)
                 reseed_extinct_colonies()
-                window_start = time.monotonic()
-            elapsed = time.monotonic() - t_start
+                last_status_at = now
+                last_status_tick = tick
+                window_start = now
+            elapsed = now - t_start
             time.sleep(max(0.0, tick_interval - elapsed))
     except KeyboardInterrupt:
-        print_shutdown_summary(tick)
-        EVOLUTION_ENGINE.shutdown()
-        server.shutdown()
+        _SHUTDOWN_REQUESTED = True
+    print_shutdown_summary(tick)
+    if save_on_exit:
+        save_live_session_on_exit()
+    EVOLUTION_ENGINE.shutdown()
+    server.shutdown()
+
+
+def save_live_session_on_exit() -> None:
+    if not hasattr(EVOLUTION_ENGINE, "save_session"):
+        return
+    print("  Saving live session...")
+    restore_sigint = False
+    previous_sigint = None
+    if threading.current_thread() is threading.main_thread():
+        previous_sigint = signal.getsignal(signal.SIGINT)
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        restore_sigint = True
+    try:
+        path = EVOLUTION_ENGINE.save_session()
+        print(f"  Live session saved → {path}")
+    except BaseException as exc:
+        print(f"  Live session save failed: {exc}")
+    finally:
+        if restore_sigint:
+            signal.signal(signal.SIGINT, previous_sigint)
 
 
 _STAGE_ABBR = {
@@ -4981,9 +5576,16 @@ def print_periodic_status(tick: int, tps: float = 0.0):
     stage_str = " ".join(
         f"{'★' if i == best_idx else ' '}{_STAGE_ABBR.get(stages[i], '???')}" for i in range(n_cols)
     )
-    print(f"  fit  [{fit_str}]")
-    print(f"  alive[{alive_str}]")
-    print(f"  stage[{stage_str}]")
+    total_fit = sum(fitnesses)
+    total_alive = sum(alive_counts)
+    stage_counts: Dict[str, int] = {}
+    for s in stages:
+        abbr = _STAGE_ABBR.get(s, "???")
+        stage_counts[abbr] = stage_counts.get(abbr, 0) + 1
+    stage_total_str = " ".join(f"{k}:{v}" for k, v in sorted(stage_counts.items()))
+    print(f"  fit  [{fit_str}] total={total_fit:.3f}")
+    print(f"  alive[{alive_str}] total={total_alive}")
+    print(f"  stage[{stage_str}] total={stage_total_str}")
 
 
 def reseed_extinct_colonies():
